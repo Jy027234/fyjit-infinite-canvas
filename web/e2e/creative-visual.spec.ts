@@ -89,6 +89,30 @@ test("account menu exposes sign out on desktop and mobile", async ({ page }) => 
     await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
 });
 
+test("shell shares FYJIT language and theme preferences", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    await page.addInitScript(() => {
+        window.localStorage.setItem("i18nextLng", "en");
+        document.cookie = "vite-ui-theme=light; Path=/; Max-Age=31536000; SameSite=Lax";
+    });
+    await page.route("**/api/user/self", async (route) => {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, message: "", data: null }) });
+    });
+    await page.goto("/creative/image");
+
+    await expect(page.getByText("FYJIT Creative Center", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Image Workbench" })).toBeVisible();
+    await expect(page.locator("html")).toHaveClass(/light/);
+    await page.getByRole("button", { name: "Switch to dark theme" }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await expect.poll(() => page.evaluate(() => document.cookie)).toContain("vite-ui-theme=dark");
+
+    await page.getByRole("button", { name: "User menu" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("ja");
+    await expect(page.getByText("FYJIT クリエイティブセンター", { exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("i18nextLng"))).toBe("ja");
+});
+
 test("workbenches expose the server-side estimate and normalized request summary", async ({ page }) => {
     await prepareCreativePage(page, viewports[3]);
     await page.goto("/creative/image");

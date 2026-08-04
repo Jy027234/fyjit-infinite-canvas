@@ -14,12 +14,35 @@ type FyjitStore = {
     bootstrapErrorStatus?: number;
     bootstrapErrorCode?: string;
     loadBootstrap: (signal?: AbortSignal) => Promise<void>;
+    setInterfaceLanguage: (language: string) => Promise<void>;
 };
 
 export const useFyjitStore = create<FyjitStore>((set) => ({
     bootstrapStatus: "idle",
     models: [],
     tokens: [],
+    setInterfaceLanguage: async (language) => {
+        const previous = useFyjitStore.getState().bootstrap?.user.language;
+        const updateLocalState = (nextLanguage?: string) => set((state) => (state.bootstrap ? { bootstrap: { ...state.bootstrap, user: { ...state.bootstrap.user, language: nextLanguage } } } : {}));
+        try {
+            window.localStorage.setItem("i18nextLng", language);
+        } catch {
+            // Language still persists server-side when browser storage is unavailable.
+        }
+        updateLocalState(language);
+        const uid = window.localStorage.getItem("uid") || "";
+        const response = await fetch("/api/user/self", {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json", "New-Api-User": uid },
+            body: JSON.stringify({ language }),
+        });
+        const payload = (await response.json().catch(() => undefined)) as { success?: boolean; message?: string } | undefined;
+        if (!response.ok || payload?.success !== true) {
+            updateLocalState(previous);
+            throw new Error(payload?.message || "Failed to update interface language");
+        }
+    },
     loadBootstrap: async (signal) => {
         set({ bootstrapStatus: "loading", bootstrapError: undefined, bootstrapErrorStatus: undefined, bootstrapErrorCode: undefined });
         try {

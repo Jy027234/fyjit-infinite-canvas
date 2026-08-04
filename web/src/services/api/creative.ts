@@ -7,6 +7,7 @@ export type CreativeUser = {
     username: string;
     display_name: string;
     avatar_url?: string;
+    language?: string;
     quota: number;
     group: string;
 };
@@ -412,7 +413,22 @@ export async function waitForCreativeJob(jobId: string, options?: { signal?: Abo
     }
 }
 
-export function fetchCreativeAssets(options?: { page?: number; pageSize?: number; type?: string; sourceModule?: string; projectId?: string; folderId?: string; search?: string; favorite?: boolean; model?: string; tag?: string; createdFrom?: number; createdTo?: number; trash?: boolean; signal?: AbortSignal }) {
+export function fetchCreativeAssets(options?: {
+    page?: number;
+    pageSize?: number;
+    type?: string;
+    sourceModule?: string;
+    projectId?: string;
+    folderId?: string;
+    search?: string;
+    favorite?: boolean;
+    model?: string;
+    tag?: string;
+    createdFrom?: number;
+    createdTo?: number;
+    trash?: boolean;
+    signal?: AbortSignal;
+}) {
     const search = new URLSearchParams();
     if (options?.page) search.set("page", String(options.page));
     if (options?.pageSize) search.set("page_size", String(options.pageSize));
