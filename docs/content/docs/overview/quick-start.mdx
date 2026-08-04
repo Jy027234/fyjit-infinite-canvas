@@ -5,17 +5,17 @@ description: 用最少步骤把无限画布跑起来
 
 # 快速开始
 
-如果你只是想先把项目跑起来，优先部署或启动 `web/` 前端。
+本派生版本是 FYJIT 创作中心的独立前端，必须连接同域 FYJIT Creative API。单独启动静态页面可用于界面开发，但不能绕过 FYJIT Relay 发起真实生成。
 
-## Vercel 部署
+## 生产部署
 
-在 Vercel 中导入仓库即可，根目录 `vercel.json` 会构建 `web/`。当前版本的 AI 请求由浏览器前台直连用户自己的 OpenAI 兼容地址，不需要额外配置服务端。
+使用不可变 commit 构建镜像，并通过主站反向代理把 `/creative/*` 指向本容器、`/api/creative/*` 指向 FYJIT Go 服务。运行时必须设置与镜像完全对应的 `SOURCE_COMMIT` 和 `SOURCE_URL`。
 
 ## 本地启动
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone <FYJIT 公开派生仓库 URL>
+cd fyjit-infinite-canvas
 cd web
 bun install
 bun run dev
@@ -32,17 +32,17 @@ http://localhost:3000
 如果你需要基于当前源码构建镜像：
 
 ```bash
-docker build -t infinite-canvas .
-docker run --rm -p 3000:3000 infinite-canvas
+docker build --build-arg VITE_BASE=/creative/ -t fyjit-infinite-canvas .
+docker run --rm -p 3001:3000 --env-file .env fyjit-infinite-canvas
 ```
 
 ## 首次使用建议
 
-- 先打开右上角配置弹窗，填入自己的 `Base URL`、`API Key` 和模型名。
-- 如果需要提示词仓库内容，打开 `/prompts` 会由浏览器前端直连拉取并缓存到 IndexedDB。
-- 如果需要跨设备同步画布、素材和生成记录，可在配置弹窗中填写 WebDAV。
+- 先在 FYJIT 主站完成登录、模型渠道和本站 Token 配置。
+- 通过同域 `/creative/image` 进入本应用；启动时会调用 `/api/creative/bootstrap` 获取用户、功能开关、导航和能力版本。
+- 在素材、提示词或画布页面写入数据后，换设备登录同一账号验证服务端同步。
 
 ## 说明
 
-- 当前画布项目和“我的素材”主要保存在浏览器本地，WebDAV 同步需要用户自行配置。
-- AI API Key 保存在浏览器本地，并由前端直接请求 OpenAI 兼容接口。
+- 服务端数据是唯一权威来源，IndexedDB/本地存储只可作为瞬时缓存。
+- 上游 API Key 和 Base URL 不进入浏览器；所有真实模型请求必须经 FYJIT Relay。

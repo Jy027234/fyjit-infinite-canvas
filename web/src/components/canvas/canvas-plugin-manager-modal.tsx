@@ -216,7 +216,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             <div className="space-y-3">
                 <div className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5" style={{ borderColor: "#f59e0b55", background: "#f59e0b14", color: theme.node.text }}>
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
-                    <span>插件代码会在当前页面内直接执行，可访问本地数据（包含 AI API Key）。请仅安装你信任来源的插件。</span>
+                    <span>插件代码会在当前页面内直接执行并可访问本地画布数据。FYJIT 不向浏览器或插件暴露上游 API Key，请仅安装你信任来源的插件。</span>
                 </div>
                 <Tabs defaultActiveKey="official" items={tabs} />
             </div>

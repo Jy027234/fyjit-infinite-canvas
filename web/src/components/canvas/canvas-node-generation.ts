@@ -1,4 +1,4 @@
-import type { AiTextMessage } from "@/services/api/image";
+import type { AiTextMessage } from "@/services/canvas-creative";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
@@ -161,6 +161,7 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
     if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return null;
     return {
         id: node.id,
+        assetId: node.metadata.assetId,
         name: `${node.title || node.id}.png`,
         type: node.metadata.mimeType || "image/png",
         dataUrl: node.metadata.content,
@@ -172,6 +173,7 @@ function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
     if (node.type !== CanvasNodeType.Video || !node.metadata?.content) return null;
     return {
         id: node.id,
+        assetId: node.metadata.assetId,
         name: `${node.title || node.id}.mp4`,
         type: node.metadata.mimeType || "video/mp4",
         url: node.metadata.content,
@@ -187,6 +189,7 @@ function readReferenceAudio(node: CanvasNodeData): ReferenceAudio | null {
     if (node.type !== CanvasNodeType.Audio || !node.metadata?.content) return null;
     return {
         id: node.id,
+        assetId: node.metadata.assetId,
         name: `${node.title || node.id}.mp3`,
         type: node.metadata.mimeType || "audio/mpeg",
         url: node.metadata.content,

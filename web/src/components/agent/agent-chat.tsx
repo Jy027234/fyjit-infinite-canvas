@@ -40,6 +40,7 @@ export function AgentChatTimeline({
     const [showScrollToBottom, setShowScrollToBottom] = useState(false);
     const streaming = messages.some((message) => message.streamId);
     const working = bootstrapStatus || workingActivity(messages.at(-1));
+    const workingDetail = "detail" in working && typeof working.detail === "string" ? working.detail : undefined;
     const updateScrollState = useCallback(() => {
         const list = listRef.current;
         if (!list) return;
@@ -76,9 +77,7 @@ export function AgentChatTimeline({
         <div className="relative min-h-0 flex-1">
             <div ref={listRef} className="thin-scrollbar h-full select-text overflow-y-auto" onScroll={updateScrollState}>
                 <div ref={contentRef} className="space-y-4 px-4 pt-4">
-                    {timeline.map((entry) => entry.type === "commands"
-                        ? <AgentCommandGroupRow key={entry.id} items={entry.items} theme={theme} />
-                        : <AgentChatMessageRow key={entry.item.id} item={entry.item} theme={theme} />)}
+                    {timeline.map((entry) => (entry.type === "commands" ? <AgentCommandGroupRow key={entry.id} items={entry.items} theme={theme} /> : <AgentChatMessageRow key={entry.item.id} item={entry.item} theme={theme} />))}
                     {pendingTool ? (
                         <AgentPendingToolCard
                             summary={summarizeCanvasAgentOps(pendingTool.input?.ops || []) || toolName(pendingTool.name)}
@@ -88,19 +87,21 @@ export function AgentChatTimeline({
                             onApprove={onApproveTool}
                         />
                     ) : null}
-                    {pendingApprovals.map((approval) => <AgentApprovalCard key={approval.requestId} approval={approval} theme={theme} onDecision={(decision) => onApprovalDecision(approval, decision)} />)}
-                    {(sending || waiting || bootstrapStatus) && !streaming && !pendingTool && !pendingApprovals.length ? <AgentWorkingMessage text={working.text} detail={"detail" in working ? working.detail : undefined} status={bootstrapStatus?.status} mcpStatuses={Object.entries(mcpStartupStatuses).map(([name, item]) => ({ name, ...item }))} activityKey={working.key} theme={theme} /> : null}
+                    {pendingApprovals.map((approval) => (
+                        <AgentApprovalCard key={approval.requestId} approval={approval} theme={theme} onDecision={(decision) => onApprovalDecision(approval, decision)} />
+                    ))}
+                    {(sending || waiting || bootstrapStatus) && !streaming && !pendingTool && !pendingApprovals.length ? (
+                        <AgentWorkingMessage text={working.text} detail={workingDetail} status={bootstrapStatus?.status} mcpStatuses={Object.entries(mcpStartupStatuses).map(([name, item]) => ({ name, ...item }))} activityKey={working.key} theme={theme} />
+                    ) : null}
                 </div>
             </div>
-            {showScrollToBottom ? (
-                <AgentScrollToBottom theme={theme} title="查看最新消息" onClick={() => scrollToBottom()} />
-            ) : null}
+            {showScrollToBottom ? <AgentScrollToBottom theme={theme} title="查看最新消息" onClick={() => scrollToBottom()} /> : null}
         </div>
     );
 }
 
 export function AgentTaskProgress({ theme, busy }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; busy: boolean }) {
-    const plan = useAgentStore((state) => busy ? currentPlanMessage(state.messages) : latestPlanMessage(state.messages));
+    const plan = useAgentStore((state) => (busy ? currentPlanMessage(state.messages) : latestPlanMessage(state.messages)));
     if (!plan) return null;
     return (
         <div className="shrink-0 px-4 pt-2">

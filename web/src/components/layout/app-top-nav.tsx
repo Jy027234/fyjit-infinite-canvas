@@ -1,34 +1,33 @@
-import { Bot, Menu } from "lucide-react";
-import { Button, Tooltip } from "antd";
+import { Home, LogOut, Menu } from "lucide-react";
+import { Avatar, Dropdown, Tooltip } from "antd";
 import { Link, useLocation } from "react-router-dom";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
-import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { FYJIT_HOME_URL } from "@/constant/runtime-config";
 import { cn } from "@/lib/utils";
-import { useEffect, useRef, useState } from "react";
-import { useAgentStore } from "@/stores/use-agent-store";
+import { useFyjitSignOut } from "@/hooks/use-fyjit-sign-out";
+import { useState } from "react";
+import { useFyjitStore } from "@/stores/use-fyjit-store";
 
 export function AppTopNav() {
     const { pathname } = useLocation();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
-    const autoConnectRef = useRef(false);
-    const agentToken = useAgentStore((state) => state.token);
-    const agentEnabled = useAgentStore((state) => state.enabled);
-    const agentConnected = useAgentStore((state) => state.connected);
-    const connectAgent = useAgentStore((state) => state.connectAgent);
-    const togglePanel = useAgentStore((state) => state.togglePanel);
-    const panelOpen = useAgentStore((state) => state.panelOpen);
+    const { signingOut, signOut } = useFyjitSignOut();
+    const user = useFyjitStore((state) => state.bootstrap?.user);
+    const serverNavigation = useFyjitStore((state) => state.bootstrap?.navigation);
+    const tools = navigationTools
+        .map((tool) => {
+            const key = tool.slug === "image" ? "image-workbench" : tool.slug === "video" ? "video-workbench" : tool.slug === "assets" ? "creative-assets" : tool.slug === "prompts" ? "creative-prompts" : "infinite-canvas";
+            const serverItem = serverNavigation?.find((item) => item.key === key);
+            return { ...tool, label: serverItem?.label || tool.label, enabled: serverItem?.enabled ?? true };
+        })
+        .filter((tool) => tool.enabled);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
-    const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
-
-    useEffect(() => {
-        if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
-        autoConnectRef.current = true;
-        connectAgent({ silent: true });
-    }, [agentConnected, agentEnabled, agentToken, connectAgent]);
+    const activeToolSlug = tools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
+    const logoUrl = `${import.meta.env.BASE_URL}logo.svg`;
 
     return (
         <>
@@ -40,11 +39,11 @@ export function AppTopNav() {
                                 <span
                                     className="size-5 shrink-0 bg-current"
                                     style={{
-                                        mask: "url(/logo.svg) center / contain no-repeat",
-                                        WebkitMask: "url(/logo.svg) center / contain no-repeat",
+                                        mask: `url(${logoUrl}) center / contain no-repeat`,
+                                        WebkitMask: `url(${logoUrl}) center / contain no-repeat`,
                                     }}
                                 />
-                                <span className="text-base font-medium">无限画布</span>
+                                <span className="text-base font-medium">FYJIT 创作中心</span>
                             </Link>
 
                             <button
@@ -58,7 +57,7 @@ export function AppTopNav() {
                             </button>
 
                             <nav className="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
-                                {navigationTools.map((tool) => {
+                                {tools.map((tool) => {
                                     const Icon = tool.icon;
                                     const active = tool.slug === activeToolSlug;
                                     return (
@@ -81,17 +80,40 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <Tooltip title={panelOpen ? "收起 Agent" : "打开 Agent"}>
-                                <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
+                            <Tooltip title="返回 FYJIT">
+                                <a href={FYJIT_HOME_URL} className="inline-flex size-8 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-950 dark:hover:bg-stone-800 dark:hover:text-stone-100" aria-label="返回 FYJIT">
+                                    <Home className="size-4" />
+                                </a>
                             </Tooltip>
+                            {user ? (
+                                <Dropdown
+                                    placement="bottomRight"
+                                    menu={{
+                                        items: [
+                                            {
+                                                key: "logout",
+                                                danger: true,
+                                                disabled: signingOut,
+                                                icon: <LogOut className="size-4" />,
+                                                label: signingOut ? "正在退出…" : "退出登录",
+                                                onClick: () => void signOut(),
+                                            },
+                                        ],
+                                    }}
+                                >
+                                    <button type="button" className="hidden appearance-none items-center gap-2 rounded-full border border-stone-200 bg-transparent py-1 pl-1 pr-2 font-[inherit] text-xs text-stone-600 sm:flex dark:border-stone-800 dark:text-stone-300" aria-label="用户菜单">
+                                        <Avatar size={24} src={user.avatar_url}>{user.display_name.slice(0, 1)}</Avatar>
+                                        <span className="max-w-28 truncate">{user.display_name}</span>
+                                    </button>
+                                </Dropdown>
+                            ) : null}
                             <UserStatusActions />
                         </div>
                     </div>
                 </header>
             ) : null}
 
-            <MobileNavDrawer open={mobileNavOpen} activeToolSlug={activeToolSlug} onClose={() => setMobileNavOpen(false)} />
-            <AppConfigModal />
+            <MobileNavDrawer open={mobileNavOpen} activeToolSlug={activeToolSlug} tools={tools} onClose={() => setMobileNavOpen(false)} />
         </>
     );
 }

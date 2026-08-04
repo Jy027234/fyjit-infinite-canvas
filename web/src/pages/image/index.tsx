@@ -1,10 +1,11 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ClipboardPaste, Download, FolderPlus, GitCompare, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
-import localforage from "localforage";
 import { saveAs } from "file-saver";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
+import { CreativeEstimateSummary } from "@/components/creative-estimate-summary";
+import { CreativeReadinessNotice } from "@/components/creative-readiness-notice";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
@@ -12,12 +13,15 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useWorkbenchLayoutStore } from "@/stores/use-workbench-layout-store";
 import { nanoid } from "nanoid";
-import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { requestEdit, requestGeneration } from "@/services/api/image";
-import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, fetchCreativeJobs, uploadCreativeAsset, waitForCreativeJob, type CreativeJob } from "@/services/api/creative";
+import { uploadImage } from "@/services/image-storage";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
+import { useCreativeIntentStore } from "@/stores/use-creative-intent-store";
+import { useFyjitStore } from "@/stores/use-fyjit-store";
+import { useCreativeEstimate } from "@/hooks/use-creative-estimate";
 import type { ReferenceImage } from "@/types/image";
 
 type GeneratedImage = {
@@ -43,6 +47,7 @@ type GenerationLog = {
     createdAt: number;
     title: string;
     prompt: string;
+    negativePrompt: string;
     time: string;
     model: string;
     config: GenerationLogConfig;
@@ -53,30 +58,37 @@ type GenerationLog = {
     imageCount: number;
     size: string;
     quality: string;
-    status: "成功" | "失败";
+    status: "排队中" | "运行中" | "成功" | "部分成功" | "审核拒绝" | "失败" | "已取消" | "已超时";
     images: GeneratedImage[];
     thumbnails: string[];
+    task: CreativeJob;
+    error?: string;
 };
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
 export default function ImagePage() {
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
+    const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const historyCollapsed = useWorkbenchLayoutStore((state) => state.imageHistoryCollapsed);
+    const parametersCollapsed = useWorkbenchLayoutStore((state) => state.imageParametersCollapsed);
+    const setHistoryCollapsed = useWorkbenchLayoutStore((state) => state.setImageHistoryCollapsed);
+    const setParametersCollapsed = useWorkbenchLayoutStore((state) => state.setImageParametersCollapsed);
     const [prompt, setPrompt] = useState("");
+    const [negativePrompt, setNegativePrompt] = useState("");
+    const activeIntent = useCreativeIntentStore((state) => state.activeIntent);
+    const fyjitModels = useFyjitStore((state) => state.models);
+    const fyjitTokens = useFyjitStore((state) => state.tokens);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
@@ -90,6 +102,7 @@ export default function ImagePage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [comparison, setComparison] = useState<{ before: string; after: string }>();
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
@@ -99,8 +112,34 @@ export default function ImagePage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim());
+    const hasImageModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation"));
+    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length);
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.image_generation;
+    const maxImageReferences = modelProfile?.max_reference_images ?? 0;
+    const estimateParameters = { count: generationCount, size: effectiveConfig.size, quality: effectiveConfig.quality, background: effectiveConfig.background };
+    const { estimate, loading: estimateLoading, error: estimateError } = useCreativeEstimate(
+        model && fyjitTokens.length ? { capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null,
+    );
+    const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
+
+    useEffect(() => {
+        if (activeIntent?.kind !== "image") return;
+        const intent = useCreativeIntentStore.getState().consumeFor("image");
+        if (intent?.prompt) setPrompt(intent.prompt);
+        if (intent?.negative_prompt) setNegativePrompt(intent.negative_prompt);
+        if (intent?.asset_ids?.length) {
+            const ids = intent.asset_ids;
+            void Promise.all(ids.map((assetId) => fetchCreativeAsset(assetId)))
+                .then((assets) => setReferences((current) => [
+                    ...current,
+                    ...assets
+                        .filter((asset) => ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type))
+                        .map((asset) => ({ id: asset.asset_id, assetId: asset.asset_id, name: asset.title || "角色参考图", type: asset.mime_type || "image/png", dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content` })),
+                ].slice(0, maxImageReferences)))
+                .catch((error) => message.error(error instanceof Error ? error.message : "创作素材恢复失败"));
+        }
+    }, [activeIntent, message]);
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -113,14 +152,14 @@ export default function ImagePage() {
     }, []);
 
     const addReferences = async (files?: FileList | null) => {
-        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, Math.max(0, maxImageReferences - references.length));
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
         );
-        setReferences((value) => [...value, ...nextReferences]);
+        setReferences((value) => [...value, ...nextReferences].slice(0, maxImageReferences));
     };
 
     const addReferencesFromClipboard = async () => {
@@ -132,12 +171,12 @@ export default function ImagePage() {
                 return;
             }
             const nextReferences = await Promise.all(
-                blobs.map(async (blob, index) => {
+                blobs.slice(0, Math.max(0, maxImageReferences - references.length)).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences]);
+            setReferences((value) => [...value, ...nextReferences].slice(0, maxImageReferences));
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -153,9 +192,13 @@ export default function ImagePage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "请输入生图提示词" });
             return;
         }
-        if (!isAiConfigReady(effectiveConfig, model)) {
-            message.warning("请先完成配置");
-            openConfigDialog(true);
+        if (!fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation"))) {
+            message.warning("当前账号没有可用的生图模型");
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "当前账号没有可用的生图模型" });
+            return;
+        }
+        if (!fyjitTokens.length) {
+            message.warning("当前账号没有可用的本站 Token");
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图配置不完整" });
             return;
         }
@@ -170,41 +213,44 @@ export default function ImagePage() {
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
-        setResults(Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" })));
+        const resultIds = Array.from({ length: generationCount }, () => nanoid());
+        setResults(resultIds.map((id) => ({ id, status: "pending" })));
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
-        const tasks = Array.from({ length: generationCount }, (_, index) => runGenerationSlot(index, snapshot));
-
-        const result = await Promise.allSettled(tasks);
-        const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage> => item.status === "fulfilled").map((item) => item.value);
-        const successCount = successImages.length;
-        const failCount = generationCount - successCount;
-        const failed = result.find((item): item is PromiseRejectedResult => item.status === "rejected");
-        const error = failed?.reason instanceof Error ? failed.reason.message : failCount ? "生成失败" : undefined;
-        if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
-
+        let successCount = 0;
+        let failCount = 0;
         try {
-            const logImages = await Promise.all(
-                successImages.map(async (image) => {
-                    const stored = await uploadImage(image.dataUrl);
-                    return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-                }),
-            );
-            saveLog(
-                buildLog({
-                    prompt: text,
-                    model,
-                    config: { ...snapshot.config, count: String(generationCount) },
-                    references: snapshot.references,
-                    durationMs: performance.now() - batchStartedAt,
-                    successCount,
-                    failCount,
-                    status: successCount ? "成功" : "失败",
-                    images: logImages,
-                }),
-            );
-            successCount ? message.success("图片已生成") : message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
+            const [referenceAssetIds, checkedEstimate] = await Promise.all([
+                uploadImageReferences(snapshot.references),
+                estimateCreativeJob({ capability: "image_generation", model: snapshot.config.model, group: "auto", token: { strategy: "auto" }, parameters: { count: 1, size: snapshot.config.size, quality: snapshot.config.quality, background: snapshot.config.background } }),
+            ]);
+            const outcomes = await Promise.all(resultIds.map(async (resultId, index) => {
+                try {
+                    const image = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters);
+                    if (!image) throw new Error("任务没有返回图片素材");
+                    setResults((value) => updateResultById(value, resultId, { status: "success", image }));
+                    return { ok: true as const, index };
+                } catch (requestError) {
+                    const error = requestError instanceof Error ? requestError.message : "生成失败";
+                    setResults((value) => updateResultById(value, resultId, { status: "failed", error }));
+                    return { ok: false as const, error, index };
+                }
+            }));
+            successCount = outcomes.filter((outcome) => outcome.ok).length;
+            failCount = outcomes.length - successCount;
+            const firstError = outcomes.find((outcome) => !outcome.ok);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : firstError?.error });
+            await refreshLogs();
+            if (successCount && failCount) message.warning(`已生成 ${successCount} 张，${failCount} 张失败，可逐张重试`);
+            else if (successCount) message.success("图片已生成并保存到 FYJIT 素材中心");
+            else message.error(firstError?.error || "生成失败");
+        } catch (requestError) {
+            const error = requestError instanceof Error ? requestError.message : "生成失败";
+            failCount = generationCount;
+            setResults(resultIds.map((id) => ({ id, status: "failed", error })));
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount, error });
+            message.error(error);
         } finally {
             setRunning(false);
         }
@@ -237,31 +283,37 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
+        if (maxImageReferences < 1 || references.length >= maxImageReferences) {
+            message.warning("当前模型不接受更多参考图");
+            return;
+        }
         const stored = await uploadImage(image.dataUrl);
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, maxImageReferences));
         message.success("已加入参考图");
     };
 
-    const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        addAsset({
-            kind: "image",
-            title: `生成结果 ${index + 1}`,
-            coverUrl: stored.url,
-            tags: [],
-            source: "生图工作台",
-            data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
-            metadata: { source: "image-page", prompt },
-        });
-        message.success("已加入我的资产");
+    const saveResultToAssets = async (_image: GeneratedImage, _index: number) => {
+        message.success("生成结果已由 FYJIT 自动保存到素材中心");
+    };
+
+    const sendResultToVideo = async (image: GeneratedImage) => {
+        try {
+            const intent = await createCreativeIntent("video", { prompt: prompt.trim(), negative_prompt: negativePrompt.trim() || undefined, asset_ids: [image.id] });
+            window.location.assign(new URL(`video?intent=${encodeURIComponent(intent.id)}`, document.baseURI).toString());
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "无法送入视频创作台");
+        }
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
-            const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            if (maxImageReferences < 1 || references.length >= maxImageReferences) {
+                message.warning("当前模型不接受更多参考图");
+                return;
+            }
+            setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
         }
@@ -270,6 +322,7 @@ export default function ImagePage() {
 
     const createSession = () => {
         setPrompt("");
+        setNegativePrompt("");
         setReferences([]);
         setResults([]);
         setElapsedMs(0);
@@ -279,32 +332,62 @@ export default function ImagePage() {
     };
 
     const deleteSelectedLogs = () => {
-        const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
         }
         setSelectedLogIds([]);
         setDeleteConfirmOpen(false);
+        message.info("服务端生成记录用于消费审计，不能删除；可在素材中心删除结果素材");
     };
 
-    const saveLog = (log: GenerationLog) => {
-        void logStore.setItem(log.id, serializeLog(log)).then(refreshLogs);
+    const refreshLogs = async (resumePending = true) => {
+        const response = await fetchCreativeJobs({ capability: "image_generation", pageSize: 100 });
+        const nextLogs = await Promise.all((response.items || []).map(creativeJobToImageLog));
+        setLogs(nextLogs);
+        if (resumePending) {
+            for (const log of nextLogs) {
+                if (log.status === "排队中" || log.status === "运行中") void pollImageLog(log);
+            }
+        }
+        return nextLogs;
     };
 
-    const refreshLogs = async () => setLogs(await readStoredLogs());
+    const pollImageLog = async (log: GenerationLog) => {
+        if (activeLogIdsRef.current.has(log.id)) return;
+        activeLogIdsRef.current.add(log.id);
+        try {
+            const completed = await waitForCreativeJob(log.id, { intervalMs: 1500 });
+            const next = await creativeJobToImageLog(completed);
+            setLogs((current) => current.map((item) => (item.id === next.id ? next : item)));
+            setPreviewLog((current) => (current?.id === next.id ? next : current));
+            setResults((current) => current.some((item) => item.id === next.id)
+                ? next.images.length
+                    ? next.images.map((image) => ({ id: image.id, status: "success" as const, image }))
+                    : [{ id: next.id, status: "failed", error: next.error || next.status }]
+                : current);
+        } catch {
+            // 网络恢复后由下一次历史刷新继续订阅同一服务端任务。
+        } finally {
+            activeLogIdsRef.current.delete(log.id);
+        }
+    };
 
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
         setLogsOpen(false);
         setPrompt(log.prompt);
-        setReferences(log.references || []);
+        setNegativePrompt(log.negativePrompt);
+        setReferences((log.references || []).slice(0, maxImageReferences));
         if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+        setResults(log.status === "排队中" || log.status === "运行中"
+            ? [{ id: log.id, status: "pending" }]
+            : log.images.length
+                ? log.images.map((image) => ({ id: image.id, status: "success", image }))
+                : [{ id: log.id, status: "failed", error: log.error || log.status }]);
     };
 
     const buildRequestSnapshot = () => {
@@ -313,28 +396,60 @@ export default function ImagePage() {
             message.error("请输入生图提示词");
             return null;
         }
-        if (!isAiConfigReady(effectiveConfig, model)) {
-            message.warning("请先完成配置");
-            openConfigDialog(true);
+        if (!fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation")) || !fyjitTokens.length) {
+            message.warning("当前账号缺少可用生图模型或本站 Token");
             return null;
         }
-        return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
+        const maxReferences = maxImageReferences;
+        if (references.length > maxReferences) {
+            message.error(`参考素材最多 ${maxReferences} 个，请先移除多余素材`);
+            return null;
+        }
+        return { text, negativePrompt: negativePrompt.trim(), config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
-        const itemStartedAt = performance.now();
-        try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
-            const image = result[0];
-            if (!image) throw new Error("接口没有返回图片");
-            const meta = await readImageMeta(image.dataUrl);
-            const nextImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl) };
-            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
-            return nextImage;
-        } catch (error) {
-            setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
-            throw error;
-        }
+    const uploadImageReferences = (items: ReferenceImage[]) => Promise.all(
+        items.map(async (reference) => {
+            if (reference.assetId) return reference.assetId;
+            const response = await fetch(reference.dataUrl);
+            if (!response.ok) throw new Error(`参考图 ${reference.name} 读取失败`);
+            const asset = await uploadCreativeAsset(await response.blob(), reference.name);
+            return asset.asset_id;
+        }),
+    );
+
+    const submitImageJob = async (snapshot: { text: string; negativePrompt: string; config: AiConfig; references: ReferenceImage[] }, referenceAssetIds: string[], normalizedParameters: Record<string, unknown>) => {
+        const requestStartedAt = performance.now();
+        const job = await createCreativeJob({
+            capability: "image_generation",
+            model: snapshot.config.model,
+            group: "auto",
+            token: { strategy: "auto" },
+            prompt: snapshot.text,
+            negative_prompt: snapshot.negativePrompt || undefined,
+            parameters: normalizedParameters,
+            reference_asset_ids: referenceAssetIds,
+            idempotency_key: crypto.randomUUID(),
+        });
+        const completed = await waitForCreativeJob(job.job_id, {
+            onUpdate: (next) => {
+                const pendingProgress = Math.max(1, Math.min(99, next.progress));
+                setElapsedMs(performance.now() - requestStartedAt);
+                setResults((current) => current.map((item) => (item.status === "pending" ? { ...item, error: `生成进度 ${pendingProgress}%` } : item)));
+            },
+        });
+        if (completed.status !== "SUCCEEDED" && completed.status !== "PARTIAL_SUCCESS") throw new Error(completed.error || "生图任务未完成");
+        if (completed.status === "PARTIAL_SUCCESS") message.warning(completed.error || "部分候选生成失败，已保留成功结果");
+        const assets = await Promise.all((completed.result_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId)));
+        return assets.map((asset) => ({
+            id: asset.asset_id,
+            dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+            durationMs: performance.now() - requestStartedAt,
+            width: asset.width || 0,
+            height: asset.height || 0,
+            bytes: asset.size_bytes || 0,
+            mimeType: asset.mime_type,
+        }))[0];
     };
 
     const retryResult = async (index: number) => {
@@ -342,44 +457,45 @@ export default function ImagePage() {
         if (!snapshot) return;
         setPreviewLog(null);
         setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
-        const retryStartedAt = performance.now();
         try {
-            const image = await runGenerationSlot(index, snapshot);
-            const stored = await uploadImage(image.dataUrl);
-            const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-            setResults((value) => updateResultAt(value, index, { image: { ...image, dataUrl: stored.url, storageKey: stored.storageKey } }));
-            saveLog(
-                buildLog({
-                    prompt: snapshot.text,
-                    model,
-                    config: { ...snapshot.config, count: "1" },
-                    references: snapshot.references,
-                    durationMs: performance.now() - retryStartedAt,
-                    successCount: 1,
-                    failCount: 0,
-                    status: "成功",
-                    images: [logImage],
-                }),
-            );
+            const [referenceAssetIds, checkedEstimate] = await Promise.all([
+                uploadImageReferences(snapshot.references),
+                estimateCreativeJob({ capability: "image_generation", model: snapshot.config.model, group: "auto", token: { strategy: "auto" }, parameters: { count: 1, size: snapshot.config.size, quality: snapshot.config.quality, background: snapshot.config.background } }),
+            ]);
+            const image = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters);
+            if (!image) throw new Error("任务没有返回图片素材");
+            setResults((value) => updateResultAt(value, index, { status: "success", image }));
+            await refreshLogs();
             message.success("重试成功");
         } catch {
-            // runGenerationSlot 已经把结果状态更新为 failed
+            // submitImageJob 已经返回用户可见错误。
         }
     };
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+            <main className={`grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden ${historyCollapsed ? "lg:grid-cols-[48px_minmax(0,1fr)]" : "lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)]"}`}>
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel
-                        logs={logs}
-                        selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
-                        onSelectedLogIdsChange={setSelectedLogIds}
-                        onCreateSession={createSession}
-                        onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                        onPreviewLog={(log) => void previewGenerationLog(log)}
-                    />
+                    {historyCollapsed ? (
+                        <button type="button" className="flex size-full min-h-32 flex-col items-center gap-2 rounded-md py-2 text-xs text-stone-500 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100" onClick={() => setHistoryCollapsed(false)} aria-label="展开生成记录" title="展开生成记录">
+                            <ChevronRight className="size-4" />
+                            <History className="size-4" />
+                            <span className="[writing-mode:vertical-rl]">生成记录</span>
+                        </button>
+                    ) : (
+                        <>
+                            <div className="mb-2 flex justify-end"><Button size="small" type="text" icon={<ChevronLeft className="size-4" />} onClick={() => setHistoryCollapsed(true)} aria-label="折叠生成记录">折叠</Button></div>
+                            <LogPanel
+                                logs={logs}
+                                selectedLogIds={selectedLogIds}
+                                activeLogId={previewLog?.id}
+                                onSelectedLogIdsChange={setSelectedLogIds}
+                                onCreateSession={createSession}
+                                onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                                onPreviewLog={(log) => void previewGenerationLog(log)}
+                            />
+                        </>
+                    )}
                 </aside>
 
                 <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
@@ -401,6 +517,7 @@ export default function ImagePage() {
                         </div>
 
                         <div className="mt-6 space-y-5">
+                            <CreativeReadinessNotice capabilityLabel="生图" hasModel={hasImageModel} hasToken={fyjitTokens.length > 0} />
                             <div>
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">提示词</span>
@@ -414,9 +531,10 @@ export default function ImagePage() {
                                     </div>
                                 </div>
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
+                                <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 
-                            <div className="min-w-0">
+                            {maxImageReferences > 0 ? <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
                                     <div className="flex gap-2">
@@ -471,9 +589,9 @@ export default function ImagePage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? "松开即可添加参考图" : "暂无参考图，可将图片拖到这里"}</div> : null}
+                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? "松开即可添加参考图" : `暂无参考图，可将图片拖到这里，最多 ${maxImageReferences} 张`}</div> : null}
                                 </div>
-                            </div>
+                            </div> : null}
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
@@ -484,12 +602,21 @@ export default function ImagePage() {
                                 </Button>
                             </div>
 
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                            <div className="hidden sm:block">
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                    <span className="text-base font-semibold">模型与参数</span>
+                                    <Button size="small" type="text" icon={parametersCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />} onClick={() => setParametersCollapsed(!parametersCollapsed)} aria-expanded={!parametersCollapsed}>
+                                        {parametersCollapsed ? "展开" : "折叠"}
+                                    </Button>
+                                </div>
+                                {!parametersCollapsed ? <div className="grid grid-cols-2 gap-4">
+                                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                </div> : <button type="button" className="w-full rounded-lg border border-dashed border-stone-300 px-3 py-2 text-left text-sm text-stone-500 transition hover:border-stone-500 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100" onClick={() => setParametersCollapsed(false)}>参数栏已折叠；点击恢复当前模型设置</button>}
                             </div>
                         </div>
 
-                        <div className="mt-auto pt-6">
+                        <div className="sticky bottom-0 z-20 mt-auto space-y-3 bg-card pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 sm:static sm:pb-0 sm:pt-6">
+                            <CreativeEstimateSummary estimate={estimate} loading={estimateLoading} error={estimateError} requestedParameters={estimateParameters} referenceCounts={{ images: references.length }} tokenLabel={estimateTokenLabel} profile={modelProfile} />
                             <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
                                 开始生成
                             </Button>
@@ -507,7 +634,7 @@ export default function ImagePage() {
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                        <ResultImageCard key={result.id} image={result.image} index={index} compareImage={references[0]?.dataUrl} onCompare={(before, after) => setComparison({ before, after })} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} onSendToVideo={sendResultToVideo} />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
                                     ) : (
@@ -519,6 +646,11 @@ export default function ImagePage() {
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
                                 <ImagePlus className="mb-4 size-11 text-stone-400" />
                                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有生成图片" />
+                                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                                    <Button size="small" onClick={() => setPrompt("晨雾中的未来城市，电影感光影，广角构图，细节丰富")}>使用示例</Button>
+                                    <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>提示词库</Button>
+                                    <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>选择素材</Button>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -551,10 +683,16 @@ export default function ImagePage() {
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
-            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
+            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} onSelectNegativePrompt={setNegativePrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
+            </Modal>
+            <Modal title="参考图与生成结果对比" open={Boolean(comparison)} onCancel={() => setComparison(undefined)} footer={null} width={960} destroyOnHidden>
+                {comparison ? <div className="grid gap-4 pt-2 sm:grid-cols-2">
+                    <figure><figcaption className="mb-2 text-sm font-medium">参考图</figcaption><img src={comparison.before} alt="生成前参考图" className="aspect-square w-full rounded-lg bg-stone-100 object-contain dark:bg-stone-900" /></figure>
+                    <figure><figcaption className="mb-2 text-sm font-medium">生成结果</figcaption><img src={comparison.after} alt="生成后结果" className="aspect-square w-full rounded-lg bg-stone-100 object-contain dark:bg-stone-900" /></figure>
+                </div> : null}
             </Modal>
         </div>
     );
@@ -579,15 +717,21 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
 function ResultImageCard({
     image,
     index,
+    compareImage,
+    onCompare,
     onEdit,
     onDownload,
     onSaveAsset,
+    onSendToVideo,
 }: {
     image: GeneratedImage;
     index: number;
+    compareImage?: string;
+    onCompare: (before: string, after: string) => void;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
+    onSendToVideo: (image: GeneratedImage) => void;
 }) {
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
@@ -600,7 +744,7 @@ function ResultImageCard({
                     <span>{formatBytes(image.bytes)}</span>
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
-                <div className="grid min-w-0 grid-cols-3 gap-2">
+                <div className="grid min-w-0 grid-cols-2 gap-2">
                     <Tooltip title="添加到资产">
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
                             添加到资产
@@ -614,6 +758,16 @@ function ResultImageCard({
                     <Tooltip title="下载">
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
                             下载
+                        </Button>
+                    </Tooltip>
+                    {compareImage ? <Tooltip title="与首张参考图对比">
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<GitCompare className="size-3.5" />} onClick={() => onCompare(compareImage, image.dataUrl)}>
+                            前后对比
+                        </Button>
+                    </Tooltip> : null}
+                    <Tooltip title="送入视频创作台">
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<VideoIcon className="size-3.5" />} onClick={() => void onSendToVideo(image)}>
+                            送入视频
                         </Button>
                     </Tooltip>
                 </div>
@@ -648,6 +802,7 @@ function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => voi
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
                     {error}
                 </Typography.Paragraph>
+                <p className="text-xs text-red-500/80 dark:text-red-300/80">是否产生消费以 FYJIT 使用记录为准；重试会创建新的独立任务。</p>
             </div>
             <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
                 <Button size="small" danger onClick={onRetry}>
@@ -660,6 +815,10 @@ function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => voi
 
 function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
+}
+
+function updateResultById(results: GenerationResult[], id: string, next: Partial<GenerationResult>) {
+    return results.map((item) => (item.id === id ? { ...item, ...next } : item));
 }
 
 function LogPanel({
@@ -722,9 +881,10 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
 
     return (
+        <div className={`overflow-hidden rounded-lg border transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}>
         <button
             type="button"
-            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
+            className="block w-full p-2 text-left"
             onClick={onClick}
         >
             <div className="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
@@ -743,12 +903,11 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                 </div>
                 <div className="grid justify-items-end gap-2">
                     <div className="flex gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="blue">
-                            成功 {log.successCount ?? log.imageCount}
-                        </Tag>
+                        {!log.successCount && !log.failCount ? <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "排队中" || log.status === "运行中" ? "processing" : "default"}>{log.status}</Tag> : null}
+                        {log.successCount ? <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="blue">成功 {log.successCount}</Tag> : null}
                         {log.failCount ? (
-                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="red">
-                                失败 {log.failCount}
+                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "部分成功" ? "orange" : "red"}>
+                                {log.status === "审核拒绝" ? "审核拒绝" : log.status === "部分成功" ? "部分失败" : "失败"} {log.failCount}
                             </Tag>
                         ) : null}
                     </div>
@@ -764,65 +923,92 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                 </div>
             </div>
         </button>
+        {log.task.billing_status && log.task.billing_status !== "PENDING" ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone-200 px-2 py-1.5 text-xs dark:border-stone-800">
+                <span>实际消费 ${Number(log.task.actual_cost || 0).toFixed(4)} · {log.task.actual_quota || 0} 配额</span>
+                {log.task.usage_request_id ? <a className="font-medium underline underline-offset-2" href={`/usage-logs/common?requestId=${encodeURIComponent(log.task.usage_request_id)}`}>查看使用记录</a> : null}
+            </div>
+        ) : null}
+        </div>
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            values.push(value);
-        });
-        const logs = await Promise.all(values.map(normalizeLog));
-        return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
-}
-
-async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
-    const references = await Promise.all(
-        (log.references || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
-        })),
-    );
-    const images = await Promise.all(
-        (log.images || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
-        })),
-    );
-    const config = normalizeLogConfig(log);
+async function creativeJobToImageLog(job: CreativeJob): Promise<GenerationLog> {
+    const [assets, referenceAssets] = await Promise.all([
+        Promise.all((job.result_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId).catch(() => null))),
+        Promise.all((job.reference_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId).catch(() => null))),
+    ]);
+    const images: GeneratedImage[] = assets.filter((asset): asset is NonNullable<typeof asset> => Boolean(asset)).map((asset) => ({
+        id: asset.asset_id,
+        dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+        durationMs: Math.max(0, ((job.finished_at || job.updated_at) - (job.started_at || job.created_at)) * 1000),
+        width: asset.width || 0,
+        height: asset.height || 0,
+        bytes: asset.size_bytes || 0,
+        mimeType: asset.mime_type,
+    }));
+    const config = normalizeLogConfig({
+        model: job.model,
+        imageCount: Number(job.parameters.count) || images.length || 1,
+        size: String(job.parameters.size || ""),
+        quality: String(job.parameters.quality || ""),
+    });
+    const requestedCount = Number(job.parameters.count) || images.length || 1;
     return {
-        id: log.id || nanoid(),
-        createdAt: log.createdAt || Date.now(),
-        title: log.title || log.model || "未命名",
-        prompt: log.prompt || log.title || "",
-        time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
-        model: log.model || config.imageModel || "",
+        id: job.job_id,
+        createdAt: job.created_at * 1000,
+        title: job.prompt.slice(0, 12) || "未命名",
+        prompt: job.prompt,
+        negativePrompt: job.negative_prompt || "",
+        time: new Date(job.created_at * 1000).toLocaleString("zh-CN", { hour12: false }),
+        model: job.model,
         config,
-        references,
-        durationMs: log.durationMs || 0,
-        successCount: log.successCount ?? log.imageCount ?? 0,
-        failCount: log.failCount || 0,
-        imageCount: log.imageCount || log.successCount || 0,
-        size: log.size || config.size || "",
-        quality: log.quality || config.quality || "",
-        status: log.status || "成功",
+        references: referenceAssets
+            .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset))
+            .filter((asset) => ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type))
+            .map((asset) => ({
+                id: asset.asset_id,
+                assetId: asset.asset_id,
+                name: asset.title || asset.asset_id,
+                type: asset.mime_type || "image/png",
+                dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+            })),
+        durationMs: Math.max(0, ((job.finished_at || job.updated_at) - (job.started_at || job.created_at)) * 1000),
+        successCount: images.length,
+        failCount: job.status === "SUCCEEDED" || job.status === "PARTIAL_SUCCESS"
+            ? Math.max(0, requestedCount - images.length)
+            : ["FAILED", "CANCELLED", "EXPIRED", "MODERATION_REJECTED"].includes(job.status) ? requestedCount : 0,
+        imageCount: requestedCount,
+        size: config.size,
+        quality: config.quality,
+        status: creativeImageStatusLabel(job.status),
         images,
-        thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
+        thumbnails: images.map((image) => image.dataUrl),
+        task: job,
+        error: job.error,
     };
 }
 
-function serializeLog(log: GenerationLog): GenerationLog {
-    return {
-        ...log,
-        references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
-        images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
-        thumbnails: [],
-    };
+function creativeImageStatusLabel(status: CreativeJob["status"]): GenerationLog["status"] {
+    switch (status) {
+        case "CREATED":
+        case "QUEUED":
+            return "排队中";
+        case "RUNNING":
+            return "运行中";
+        case "SUCCEEDED":
+            return "成功";
+        case "PARTIAL_SUCCESS":
+            return "部分成功";
+        case "MODERATION_REJECTED":
+            return "审核拒绝";
+        case "CANCELLED":
+            return "已取消";
+        case "EXPIRED":
+            return "已超时";
+        default:
+            return "失败";
+    }
 }
 
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
@@ -851,53 +1037,4 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
             <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
-}
-
-function buildLog({
-    prompt,
-    model,
-    config,
-    references,
-    durationMs,
-    successCount,
-    failCount,
-    status,
-    images,
-}: {
-    prompt: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    status: GenerationLog["status"];
-    images: GeneratedImage[];
-}): GenerationLog {
-    const logConfig = {
-        model: config.model,
-        imageModel: config.imageModel,
-        quality: config.quality,
-        size: config.size,
-        count: config.count,
-    };
-    return {
-        id: nanoid(),
-        createdAt: Date.now(),
-        title: prompt.slice(0, 12) || "未命名",
-        prompt,
-        time: new Date().toLocaleString("zh-CN", { hour12: false }),
-        model,
-        config: logConfig,
-        references,
-        durationMs,
-        successCount,
-        failCount,
-        imageCount: Number(logConfig.count) || successCount,
-        size: logConfig.size,
-        quality: logConfig.quality,
-        status,
-        images,
-        thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
-    };
 }

@@ -1,35 +1,32 @@
+import type { ComponentType } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
+import { RouteErrorPage } from "@/components/layout/route-error-page";
 import UserLayout from "@/layouts/user-layout";
-import AssetsPage from "@/pages/assets";
-import CanvasPage from "@/pages/canvas";
-import CanvasProjectPage from "@/pages/canvas/project";
-import ConfigPage from "@/pages/config";
-import HomePage from "@/pages/home";
-import ImagePage from "@/pages/image";
-import NotFound from "@/pages/not-found";
-import PromptsPage from "@/pages/prompts";
-import VideoPage from "@/pages/video";
+const lazyPage = (load: () => Promise<{ default: ComponentType }>) => async () => ({ Component: (await load()).default });
 
-export const router = createBrowserRouter([
-    {
-        element: (
-            <UserLayout>
-                <AnalyticsTracker />
-                <Outlet />
-            </UserLayout>
-        ),
-        children: [
-            { path: "/", element: <HomePage /> },
-            { path: "/image", element: <ImagePage /> },
-            { path: "/video", element: <VideoPage /> },
-            { path: "/assets", element: <AssetsPage /> },
-            { path: "/prompts", element: <PromptsPage /> },
-            { path: "/canvas", element: <CanvasPage /> },
-            { path: "/canvas/:id", element: <CanvasProjectPage /> },
-            { path: "/config", element: <ConfigPage /> },
-        ],
-    },
-    { path: "*", element: <NotFound /> },
-]);
+export const router = createBrowserRouter(
+    [
+        {
+            element: (
+                <UserLayout>
+                    <AnalyticsTracker />
+                    <Outlet />
+                </UserLayout>
+            ),
+            errorElement: <RouteErrorPage />,
+            children: [
+                { path: "/", lazy: lazyPage(() => import("@/pages/image")) },
+                { path: "/image", lazy: lazyPage(() => import("@/pages/image")) },
+                { path: "/video", lazy: lazyPage(() => import("@/pages/video")) },
+                { path: "/assets", lazy: lazyPage(() => import("@/pages/assets")) },
+                { path: "/prompts", lazy: lazyPage(() => import("@/pages/prompts")) },
+                { path: "/canvas", lazy: lazyPage(() => import("@/pages/canvas")) },
+                { path: "/canvas/:id", lazy: lazyPage(() => import("@/pages/canvas/project")) },
+            ],
+        },
+        { path: "*", lazy: lazyPage(() => import("@/pages/not-found")), errorElement: <RouteErrorPage /> },
+    ],
+    { basename: import.meta.env.BASE_URL },
+);

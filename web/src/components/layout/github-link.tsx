@@ -1,5 +1,6 @@
 import { GithubOutlined } from "@ant-design/icons";
 
+import { PUBLIC_SOURCE_URL } from "@/constant/env";
 import { cn } from "@/lib/utils";
 
 type GitHubLinkProps = {
@@ -12,11 +13,11 @@ export function GitHubLink({ className, style }: GitHubLinkProps) {
         <a
             className={cn("inline-flex size-9 shrink-0 items-center justify-center rounded-full text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white", className)}
             style={style}
-            href="https://github.com/basketikun/infinite-canvas"
+            href={PUBLIC_SOURCE_URL}
             target="_blank"
             rel="noreferrer"
-            aria-label="GitHub"
-            title="GitHub"
+            aria-label="本服务对应源码"
+            title="本服务对应源码"
         >
             <GithubOutlined className="text-base" />
         </a>

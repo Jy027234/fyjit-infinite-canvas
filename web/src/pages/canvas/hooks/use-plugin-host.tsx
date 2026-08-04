@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 
-import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
-import { decodeChannelModel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { requestCreativeEdit, requestCreativeGeneration, requestCreativeText, requestCreativeVideoGeneration, storeCreativeGeneratedVideo, type AiTextMessage } from "@/services/canvas-creative";
+import type { AiConfig } from "@/stores/use-config-store";
+import { useFyjitStore } from "@/stores/use-fyjit-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
@@ -33,25 +33,23 @@ type PluginHostParams = {
  * 并在挂载时加载已安装的远程插件。返回给画布用于渲染插件面板与工具条。
  */
 export function usePluginHost(params: PluginHostParams) {
-    const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
+    const { effectiveConfig, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
+    const fyjitModels = useFyjitStore((state) => state.models);
 
     // 提供给插件节点的宿主能力(节点无关,方法接收 nodeId)
     const pluginAi = useMemo<CanvasPluginAi>(() => {
         // 把插件传入的参考图(dataURL 或 URL)整理成宿主生成 API 需要的 ReferenceImage[]
         const toReferences = (refs?: string[]): ReferenceImage[] => (refs || []).filter(Boolean).map((src, index) => ({ id: `plugin-ref-${index}`, name: `ref-${index}.png`, type: "image/png", dataUrl: src }));
-        // AI 配置未就绪:弹出配置弹窗并抛错,交由插件 catch 处理
-        const ensureReady = (config: AiConfig) => {
-            if (!isAiConfigReady(config, config.model)) {
-                openConfigDialog(true);
-                throw new Error("AI 配置未就绪,请先在设置里配置模型与密钥");
-            }
+        const ensureReady = (config: AiConfig, capability: "text_generation" | "image_generation" | "video_generation") => {
+            const selected = (capability === "text_generation" ? config.textModel : capability === "image_generation" ? config.imageModel : config.videoModel) || config.model;
+            if (!fyjitModels.some((item) => item.id === selected && item.capabilities.includes(capability))) throw new Error("当前 FYJIT 账号没有可用的对应模型");
         };
         return {
             generateImage: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "image"), count: String(options?.count || 1), ...(options?.model ? { model: options.model } : {}), ...(options?.size ? { size: options.size } : {}) };
-                ensureReady(config);
+                ensureReady(config, "image_generation");
                 const references = toReferences(options?.references);
-                const items = references.length ? await requestEdit(config, prompt, references, undefined, { signal: options?.signal }) : await requestGeneration(config, prompt, { signal: options?.signal });
+                const items = references.length ? await requestCreativeEdit(config, prompt, references, undefined, { signal: options?.signal }) : await requestCreativeGeneration(config, prompt, { signal: options?.signal });
                 return { images: items.map((item) => item.dataUrl) };
             },
             generateVideo: async (prompt, options) => {
@@ -61,22 +59,27 @@ export function usePluginHost(params: PluginHostParams) {
                     ...(options?.size ? { size: options.size } : {}),
                     ...(options?.seconds ? { videoSeconds: options.seconds } : {}),
                 };
-                ensureReady(config);
-                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, toReferences(options?.references), [], [], { signal: options?.signal }));
+                ensureReady(config, "video_generation");
+                const file = await storeCreativeGeneratedVideo(await requestCreativeVideoGeneration(config, prompt, toReferences(options?.references), [], [], { signal: options?.signal }));
                 return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
             },
             generateText: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(options?.model ? { model: options.model } : {}) };
-                ensureReady(config);
+                ensureReady(config, "text_generation");
                 const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: prompt }];
-                const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
+                const text = await requestCreativeText(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
                 return { text };
             },
-            // 列出某能力下用户已配置的模型;label 取编码值中的模型名(去掉 channel 前缀)
-            listModels: (capability) => selectableModelsByCapability(effectiveConfig, capability as ModelCapability | undefined).map((value) => ({ value, label: decodeChannelModel(value)?.model || value })),
-            defaultModel: (capability) => buildGenerationConfig(effectiveConfig, undefined, capability).model,
+            listModels: (capability) => {
+                const mapped = capability === "image" ? "image_generation" : capability === "video" ? "video_generation" : "text_generation";
+                return fyjitModels.filter((item) => item.capabilities.includes(mapped)).map((item) => ({ value: item.id, label: item.name }));
+            },
+            defaultModel: (capability) => {
+                const mapped = capability === "image" ? "image_generation" : capability === "video" ? "video_generation" : "text_generation";
+                return fyjitModels.find((item) => item.capabilities.includes(mapped))?.id || buildGenerationConfig(effectiveConfig, undefined, capability).model;
+            },
         };
-    }, [effectiveConfig, isAiConfigReady, openConfigDialog]);
+    }, [effectiveConfig, fyjitModels]);
 
     const pluginHost = useMemo<CanvasPluginHost>(
         () => ({

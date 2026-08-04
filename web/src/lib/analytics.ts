@@ -70,10 +70,15 @@ export function initAnalytics() {
 }
 
 // SPA 路由切换时上报页面浏览，分发给所有已启用的统计。
-export function trackPageview(path: string) {
+export function trackPageview(path: string, routeName?: string, pageTitle?: string) {
     try {
         if (active.ga4 && window.gtag) {
-            window.gtag("event", "page_view", { page_path: path, page_location: window.location.href });
+            window.gtag("event", "page_view", {
+                page_path: path,
+                page_location: window.location.href,
+                page_title: pageTitle || document.title,
+                route_name: routeName,
+            });
         }
         if (active.baidu && window._hmt) {
             window._hmt.push(["_trackPageview", path]);
@@ -82,4 +87,3 @@ export function trackPageview(path: string) {
         /* 忽略 */
     }
 }
-

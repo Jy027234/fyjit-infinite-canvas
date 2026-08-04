@@ -8,12 +8,14 @@ import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
-import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
-import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
-import { uploadMediaFile } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
-import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
-import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import {
+    deleteCreativeAsset,
+    fetchCreativeAssets,
+    fetchCreativePrompts,
+    uploadCreativeAsset,
+    type CreativeAsset,
+    type CreativePrompt,
+} from "@/services/api/creative";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -165,7 +167,8 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
     const toggleChecked = (id: string) =>
         setChecked((prev) => {
             const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
             return next;
         });
     const allChecked = filtered.length > 0 && filtered.every((node) => checked.has(node.id));
@@ -278,37 +281,45 @@ function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme })
 // 资产 Tab —— 按类型折叠分组 + 标签筛选,点击插入画布
 // ---------------------------------------------------------------------------
 
-const ASSET_GROUPS: { kind: AssetKind; label: string; icon: typeof Square }[] = [
-    { kind: "image", label: "图片", icon: ImageIcon },
-    { kind: "video", label: "视频", icon: Video },
-    { kind: "text", label: "文本", icon: FileText },
+const ASSET_GROUPS: { kind: CreativeAsset["type"]; label: string; icon: typeof Square }[] = [
+    { kind: "IMAGE", label: "图片", icon: ImageIcon },
+    { kind: "CHARACTER", label: "角色", icon: ImageIcon },
+    { kind: "VIDEO", label: "视频", icon: Video },
+    { kind: "TEXT", label: "文本", icon: FileText },
 ];
 
-function buildInsertPayload(asset: Asset): InsertAssetPayload {
-    if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title };
-    if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height };
-    return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
+function assetContentUrl(assetId: string) {
+    return `/api/creative/assets/${encodeURIComponent(assetId)}/content`;
+}
+
+function buildInsertPayload(asset: CreativeAsset): InsertAssetPayload {
+    const title = asset.title || "未命名素材";
+    if (asset.type === "TEXT") return { kind: "text", content: asset.content || "", title, assetId: asset.asset_id };
+    if (asset.type === "VIDEO") return { kind: "video", url: asset.preview_path || assetContentUrl(asset.asset_id), title, width: asset.width, height: asset.height, assetId: asset.asset_id };
+    return { kind: "image", dataUrl: asset.preview_path || assetContentUrl(asset.asset_id), title, assetId: asset.asset_id };
 }
 
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
-    const assets = useAssetStore((state) => state.assets);
-    const addAsset = useAssetStore((state) => state.addAsset);
-    const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
     const [tagFilter, setTagFilter] = useState<string>("all");
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const query = useQuery({
+        queryKey: ["creative-assets", "canvas-side-panel", keyword],
+        queryFn: () => fetchCreativeAssets({ pageSize: 100, search: keyword.trim() || undefined }),
+        staleTime: 15_000,
+    });
+    const assets = query.data?.items || [];
 
     const allTags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))).slice(0, 20), [assets]);
 
     const filtered = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return assets.filter((asset) => (tagFilter === "all" || (asset.tags || []).includes(tagFilter)) && (!query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query)));
-    }, [assets, keyword, tagFilter]);
+        return assets.filter((asset) => tagFilter === "all" || (asset.tags || []).includes(tagFilter));
+    }, [assets, tagFilter]);
 
-    const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
+    const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.type === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
 
     const handleFiles = async (fileList: FileList | null) => {
         const files = Array.from(fileList || []);
@@ -318,17 +329,15 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         let added = 0;
         try {
             for (const file of files) {
-                if (file.type.startsWith("image/")) {
-                    const image = await uploadImage(file);
-                    addAsset({ kind: "image", title: file.name || "图片", coverUrl: image.url, tags: [], data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } });
-                    added += 1;
-                } else if (file.type.startsWith("video/")) {
-                    const media = await uploadMediaFile(file, "video");
-                    addAsset({ kind: "video", title: file.name || "视频", coverUrl: "", tags: [], data: { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType } });
+                if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
+                    await uploadCreativeAsset(file, file.name || (file.type.startsWith("image/") ? "图片" : "视频"));
                     added += 1;
                 }
             }
-            if (added) message.success(`已添加 ${added} 个资产`);
+            if (added) {
+                await query.refetch();
+                message.success(`已添加 ${added} 个资产`);
+            }
             else message.warning("仅支持图片或视频文件");
         } catch (error) {
             console.error(error);
@@ -369,7 +378,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                 </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {groups.length ? (
+                {query.isLoading ? <div className="grid min-h-48 place-items-center"><Spin /></div> : groups.length ? (
                     <div className="space-y-1">
                         {groups.map((group) => {
                             const isCollapsed = collapsed[group.kind];
@@ -388,7 +397,21 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                                     {isCollapsed ? null : (
                                         <div className="grid grid-cols-2 gap-2 px-1 pb-2 pt-1">
                                             {group.items.map((asset) => (
-                                                <AssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => (removeAsset(asset.id), message.success("资产已移除"))} />
+                                                <AssetCard
+                                                    key={asset.asset_id}
+                                                    asset={asset}
+                                                    theme={theme}
+                                                    onInsert={() => onInsert(buildInsertPayload(asset))}
+                                                    onRemove={async () => {
+                                                        try {
+                                                            await deleteCreativeAsset(asset.asset_id);
+                                                            await query.refetch();
+                                                            message.success("资产已移入回收站");
+                                                        } catch (error) {
+                                                            message.error(error instanceof Error ? error.message : "资产移除失败");
+                                                        }
+                                                    }}
+                                                />
                                             ))}
                                         </div>
                                     )}
@@ -404,7 +427,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     );
 });
 
-function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: CanvasTheme; onInsert: () => void; onRemove: () => void }) {
+function AssetCard({ asset, theme, onInsert, onRemove }: { asset: CreativeAsset; theme: CanvasTheme; onInsert: () => void; onRemove: () => void | Promise<void> }) {
     return (
         <div className="group relative aspect-square overflow-hidden rounded-xl border transition duration-200 hover:-translate-y-0.5 hover:shadow-lg" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
             <AssetCover asset={asset} />
@@ -431,13 +454,12 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: 
     );
 }
 
-function AssetCover({ asset }: { asset: Asset }) {
-    if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.data.content}</div>;
-    if (asset.kind === "video") {
-        if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
-        return <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+function AssetCover({ asset }: { asset: CreativeAsset }) {
+    if (asset.type === "TEXT") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.content}</div>;
+    if (asset.type === "VIDEO") {
+        return asset.thumbnail_path ? <img src={asset.thumbnail_path} alt="" loading="lazy" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <video src={`${asset.preview_path || assetContentUrl(asset.asset_id)}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
     }
-    return <img src={asset.coverUrl || asset.data.dataUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+    return <img src={asset.thumbnail_path || asset.preview_path || assetContentUrl(asset.asset_id)} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
 }
 
 // ---------------------------------------------------------------------------
@@ -445,21 +467,21 @@ function AssetCover({ asset }: { asset: Asset }) {
 // ---------------------------------------------------------------------------
 
 const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
-    const { message } = App.useApp();
-    const sources = usePromptSourceStore((state) => state.sources);
-    const enabledSources = useMemo(() => sources.filter((source) => source.enabled), [sources]);
     const [keyword, setKeyword] = useState("");
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-    const [detail, setDetail] = useState<Prompt | null>(null);
-
-    const copyPrompt = async (prompt: string) => {
-        try {
-            await navigator.clipboard.writeText(prompt);
-            message.success("已复制提示词");
-        } catch {
-            message.error("复制失败");
+    const query = useQuery({
+        queryKey: ["creative-prompts", "canvas-side-panel", keyword],
+        queryFn: () => fetchCreativePrompts({ pageSize: 100, search: keyword.trim() || undefined }),
+        staleTime: 15_000,
+    });
+    const groups = useMemo(() => {
+        const grouped = new Map<string, CreativePrompt[]>();
+        for (const item of query.data?.items || []) {
+            const category = item.category?.trim() || "未分类";
+            grouped.set(category, [...(grouped.get(category) || []), item]);
         }
-    };
+        return [...grouped.entries()];
+    }, [query.data?.items]);
 
     return (
         <div className="flex h-full flex-col">
@@ -467,110 +489,34 @@ const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { o
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索提示词" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                <div className="space-y-1">
-                    {enabledSources.length ? enabledSources.map((source) => (
-                        <PromptSourceGroup
-                            key={source.id}
-                            sourceId={source.id}
-                            sourceName={source.name}
-                            keyword={keyword}
-                            open={!!expanded[source.id]}
-                            theme={theme}
-                            onToggle={() => setExpanded((prev) => ({ ...prev, [source.id]: !prev[source.id] }))}
-                            onInsert={onInsert}
-                            onView={setDetail}
-                        />
-                    )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词" className="pt-12" />}
-                </div>
+                {query.isLoading ? <div className="grid min-h-48 place-items-center"><Spin /></div> : groups.length ? <div className="space-y-1">{groups.map(([category, items]) => {
+                    const open = keyword.trim() !== "" || !!expanded[category];
+                    return <div key={category}>
+                        <button type="button" onClick={() => setExpanded((prev) => ({ ...prev, [category]: !prev[category] }))} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100">
+                            <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+                            <BookOpen className="size-3.5" />
+                            <span className="min-w-0 flex-1 truncate">{category}</span>
+                            <span className="opacity-50">{items.length}</span>
+                        </button>
+                        {open ? <div className="space-y-1.5 px-1 pb-2 pt-1">{items.map((item) => <PromptRow key={item.prompt_id} item={item} theme={theme} onInsert={() => onInsert({ kind: "text", content: item.content, title: item.title, assetId: undefined })} />)}</div> : null}
+                    </div>;
+                })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词" className="pt-12" />}
             </div>
-            <PromptDetailDialog prompt={detail} onClose={() => setDetail(null)} onCopy={(prompt) => void copyPrompt(prompt)} />
         </div>
     );
 });
 
-function PromptSourceGroup({
-    sourceId,
-    sourceName,
-    keyword,
-    open,
-    theme,
-    onToggle,
-    onInsert,
-    onView,
-}: {
-    sourceId: string;
-    sourceName: string;
-    keyword: string;
-    open: boolean;
-    theme: CanvasTheme;
-    onToggle: () => void;
-    onInsert: (payload: InsertAssetPayload) => void;
-    onView: (prompt: Prompt) => void;
-}) {
-    // 展开过一次即缓存,避免收起后重复请求;搜索命中时也需要拿到数据来计数。
-    const showResults = open || !!keyword.trim();
-    const query = useQuery({ queryKey: ["side-panel-prompts", sourceId], queryFn: () => fetchSourcePrompts(sourceId), enabled: showResults, staleTime: 1000 * 60 * 60 });
-
-    const filtered = useMemo(() => {
-        const items = query.data || [];
-        const q = keyword.trim().toLowerCase();
-        if (!q) return items;
-        return items.filter((item) => [item.title, item.prompt, ...item.tags].join(" ").toLowerCase().includes(q));
-    }, [query.data, keyword]);
-
-    const insertPrompt = (item: Prompt) => onInsert({ kind: "text", content: item.prompt, title: item.title });
-
-    return (
-        <div>
-            <button type="button" onClick={onToggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100">
-                <ChevronRight className={cn("size-3.5 transition-transform", showResults && "rotate-90")} />
-                <BookOpen className="size-3.5" />
-                <span className="min-w-0 flex-1 truncate">{sourceName}</span>
-                {showResults && query.isSuccess ? <span className="opacity-50">{filtered.length}</span> : null}
-            </button>
-            {showResults ? (
-                <div className="px-1 pb-2 pt-1">
-                    {query.isLoading ? (
-                        <div className="flex justify-center py-6">
-                            <Spin size="small" />
-                        </div>
-                    ) : query.isError ? (
-                        <button type="button" onClick={() => void query.refetch()} className="block w-full py-4 text-center text-xs text-red-500 opacity-80 transition hover:opacity-100">
-                            加载失败,点击重试
-                        </button>
-                    ) : filtered.length ? (
-                        <div className="space-y-1.5">
-                            {filtered.map((item) => (
-                                <PromptRow key={item.id} item={item} theme={theme} onInsert={() => insertPrompt(item)} onView={() => onView(item)} />
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="py-4 text-center text-xs opacity-40">{keyword.trim() ? "无匹配提示词" : "该来源暂无提示词"}</div>
-                    )}
-                </div>
-            ) : null}
-        </div>
-    );
-}
-
-function PromptRow({ item, theme, onInsert, onView }: { item: Prompt; theme: CanvasTheme; onInsert: () => void; onView: () => void }) {
+function PromptRow({ item, theme, onInsert }: { item: CreativePrompt; theme: CanvasTheme; onInsert: () => void }) {
     return (
         <div className="group relative flex items-center gap-2.5 rounded-lg px-2 py-2 transition hover:bg-black/5 dark:hover:bg-white/5">
-            {item.coverUrl ? (
-                <img src={item.coverUrl} alt="" className="size-10 shrink-0 rounded-md object-cover" loading="lazy" />
-            ) : (
-                <span className="grid size-10 shrink-0 place-items-center rounded-md" style={{ background: theme.node.panel }}>
-                    <FileText className="size-4 opacity-50" />
-                </span>
-            )}
-            <button type="button" onClick={onView} className="min-w-0 flex-1 text-left">
+            <span className="grid size-10 shrink-0 place-items-center rounded-md" style={{ background: theme.node.panel }}>
+                <FileText className="size-4 opacity-50" />
+            </span>
+            <div className="min-w-0 flex-1 text-left">
                 <div className="truncate text-sm font-medium leading-snug">{item.title}</div>
-                <div className="mt-0.5 truncate text-xs leading-snug opacity-50">{item.prompt}</div>
-            </button>
+                <div className="mt-0.5 truncate text-xs leading-snug opacity-50">{item.content}</div>
+            </div>
             <div className="flex shrink-0 flex-col items-center gap-0.5">
-                <button type="button" onClick={onView} className="grid size-6 place-items-center rounded-md opacity-60 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10" aria-label="查看详情" title="查看详情">
-                    <Eye className="size-3.5" />
-                </button>
                 <button
                     type="button"
                     onClick={onInsert}

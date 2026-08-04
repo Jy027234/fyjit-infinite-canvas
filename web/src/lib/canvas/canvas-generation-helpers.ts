@@ -136,6 +136,7 @@ export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
     return [
         {
             id: node.id,
+            assetId: node.metadata.assetId,
             name: `${node.title || node.id}.png`,
             type: node.metadata.mimeType || "image/png",
             dataUrl: node.metadata.content,

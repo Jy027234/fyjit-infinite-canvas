@@ -1,5 +1,6 @@
 export type ReferenceVideo = {
     id: string;
+    assetId?: string;
     name: string;
     type: string;
     url: string;
@@ -12,6 +13,7 @@ export type ReferenceVideo = {
 
 export type ReferenceAudio = {
     id: string;
+    assetId?: string;
     name: string;
     type: string;
     url: string;

@@ -3,7 +3,8 @@ import { Cpu } from "lucide-react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { modelOptionName, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { useFyjitStore } from "@/stores/use-fyjit-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -16,11 +17,22 @@ type ModelPickerProps = {
     onMissingConfig?: () => void;
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", onMissingConfig }: ModelPickerProps) {
     const pickerId = useId();
     const [open, setOpen] = useState(false);
-    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
+    const fyjitModels = useFyjitStore((state) => state.models);
+    const requiredCapability = capability === "image" ? "image_generation" : capability === "video" ? "video_generation" : capability === "text" ? "text_generation" : undefined;
+    const options = useMemo(() => {
+        if (capability === "audio") return [];
+        return fyjitModels.filter((model) => !requiredCapability || model.capabilities.includes(requiredCapability)).map((model) => model.id);
+    }, [capability, fyjitModels, requiredCapability]);
+    const labels = useMemo(() => new Map(fyjitModels.map((model) => [model.id, model.name])), [fyjitModels]);
+    const recommended = useMemo(() => new Set(fyjitModels.filter((model) => !requiredCapability || model.recommended_for?.includes(requiredCapability)).map((model) => model.id)), [fyjitModels, requiredCapability]);
     const current = value || "";
+
+    useEffect(() => {
+        if (options.length && !options.includes(current)) onChange(options[0]);
+    }, [current, onChange, options]);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -35,7 +47,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             open={open}
             value={current}
             onOpenChange={(nextOpen) => {
-                if (nextOpen && !options.length && config.channelMode === "local") onMissingConfig?.();
+                if (nextOpen && !options.length) onMissingConfig?.();
                 if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
                 setOpen(nextOpen);
             }}
@@ -50,10 +62,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 )}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={current ? modelOptionLabel(config, current) : placeholder}
+                title={current ? labels.get(current) || current : placeholder}
             >
                 <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : placeholder}</span>
+                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? labels.get(current) || current : placeholder}</span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -67,13 +79,13 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             >
                 {options.length ? (
                     options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)}>
-                            <ModelLabel config={config} model={model} />
+                        <SelectItem key={model} value={model} textValue={labels.get(model) || model}>
+                            <ModelLabel model={model} label={labels.get(model)} recommended={recommended.has(model)} />
                         </SelectItem>
                     ))
                 ) : (
                     <SelectItem value="__empty__" disabled>
-                        {emptyModelLabel(config, capability)}
+                        {emptyModelLabel(capability)}
                     </SelectItem>
                 )}
             </SelectContent>
@@ -81,17 +93,17 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     );
 }
 
-function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
+function emptyModelLabel(capability?: ModelCapability) {
     const label = capability === "image" ? "生图" : capability === "video" ? "视频" : capability === "text" ? "文本" : capability === "audio" ? "音频" : "";
-    if (capability && config.models.length) return `请先在渠道里为${label}指定模型`;
-    return config.models.length ? `暂无匹配的${label}模型` : "请先到配置里添加渠道和模型";
+    return `当前账号暂无可用${label}模型`;
 }
 
-function ModelLabel({ config, model }: { config: AiConfig; model: string }) {
+function ModelLabel({ model, label, recommended }: { model: string; label?: string; recommended?: boolean }) {
     return (
         <span className="flex min-w-0 items-center gap-2">
             <ModelIcon model={model} />
-            <span className="truncate">{modelOptionLabel(config, model)}</span>
+            <span className="truncate">{label || model}</span>
+            {recommended ? <span className="ml-auto shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">推荐</span> : null}
         </span>
     );
 }

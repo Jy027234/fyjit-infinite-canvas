@@ -1,0 +1,132 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FYJIT Creative API",
+    "version": "1.0.0",
+    "description": "Same-origin authenticated contract for the FYJIT creative workbenches. Provider credentials are never accepted."
+  },
+  "servers": [{ "url": "/api/creative" }],
+  "x-fyjit-contract-version": "creative-v1-2026-08-04.7",
+  "x-fyjit-enums": {
+    "capability": ["text_generation", "image_generation", "video_generation"],
+    "jobStatus": ["CREATED", "QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL_SUCCESS", "MODERATION_REJECTED", "FAILED", "CANCELLED", "EXPIRED"],
+    "assetType": ["IMAGE", "VIDEO", "AUDIO", "CHARACTER", "TEXT", "CANVAS", "ARCHIVE", "REFERENCE", "KEYFRAME", "EDIT_PACK"]
+  },
+  "x-fyjit-model-capability-profile": {
+    "fields": ["verified", "input_modes", "supported_parameters", "max_reference_images", "max_reference_videos", "max_reference_audio", "risk_notices"],
+    "policy": "Unknown models use conservative server defaults; the browser must not infer capability from model names."
+  },
+  "x-fyjit-content-risk-policy": {
+    "version": "creative-risk-keywords-2026-08-04.1",
+    "levels": ["LOW", "MEDIUM", "HIGH", "BLOCKED"],
+    "assetFields": ["risk_level", "risk_categories", "risk_restrictions", "risk_policy_version", "review_required", "review_status"]
+  },
+  "paths": {
+    "/bootstrap": { "get": { "operationId": "getCreativeBootstrap", "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/capabilities": { "get": { "operationId": "getCreativeCapabilities", "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/models": { "get": { "operationId": "getCreativeModels", "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/tokens": { "get": { "operationId": "getCreativeTokens", "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/legacy-route-visits": { "post": { "operationId": "recordCreativeLegacyRouteVisit", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } } },
+    "/estimates": { "post": { "operationId": "estimateCreativeJob", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/intents": { "post": { "operationId": "createCreativeIntent", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } } },
+    "/intents/{intent_id}/consume": { "post": { "operationId": "consumeCreativeIntent", "parameters": [{ "$ref": "#/components/parameters/IntentId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/jobs": {
+      "get": { "operationId": "listCreativeJobs", "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "post": { "operationId": "createCreativeJob", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/jobs/{job_id}": { "get": { "operationId": "getCreativeJob", "parameters": [{ "$ref": "#/components/parameters/JobId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/jobs/{job_id}/cancel": { "post": { "operationId": "cancelCreativeJob", "parameters": [{ "$ref": "#/components/parameters/JobId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/jobs/{job_id}/retry": { "post": { "operationId": "retryCreativeJob", "parameters": [{ "$ref": "#/components/parameters/JobId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/jobs/{job_id}/events": { "get": { "operationId": "streamCreativeJob", "parameters": [{ "$ref": "#/components/parameters/JobId" }], "responses": { "200": { "description": "text/event-stream" } } } },
+    "/assets": {
+      "get": {
+        "operationId": "listCreativeAssets",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "page_size", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "name": "type", "in": "query", "schema": { "type": "string" } },
+          { "name": "source_module", "in": "query", "schema": { "type": "string" } },
+          { "name": "project_id", "in": "query", "schema": { "type": "string" } },
+          { "name": "folder_id", "in": "query", "schema": { "type": "string" } },
+          { "name": "favorite", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "model", "in": "query", "schema": { "type": "string" } },
+          { "name": "tag", "in": "query", "schema": { "type": "string" } },
+          { "name": "created_from", "in": "query", "schema": { "type": "integer", "format": "int64" } },
+          { "name": "created_to", "in": "query", "schema": { "type": "integer", "format": "int64" } },
+          { "name": "trash", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      },
+      "post": { "operationId": "createCreativeTextAsset", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/assets/uploads": { "post": { "operationId": "uploadCreativeAsset", "requestBody": { "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" }, "title": { "type": "string", "maxLength": 200 }, "import_key": { "type": "string", "maxLength": 160, "description": "Optional per-user idempotency key for legacy browser imports." } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "201": { "$ref": "#/components/responses/Success" } } } },
+    "/assets/{asset_id}": {
+      "get": { "operationId": "getCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "patch": { "operationId": "updateCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "delete": { "operationId": "deleteCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/assets/{asset_id}/content": { "get": { "operationId": "getCreativeAssetContent", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "description": "Private binary asset" } } } },
+    "/assets/{asset_id}/thumbnail": { "get": { "operationId": "getCreativeAssetThumbnail", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "description": "Private generated image thumbnail" } } } },
+    "/assets/{asset_id}/restore": { "post": { "operationId": "restoreCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/prompts": {
+      "get": { "operationId": "listCreativePrompts", "parameters": [
+        { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+        { "name": "page_size", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+        { "name": "search", "in": "query", "schema": { "type": "string" } },
+        { "name": "category", "in": "query", "schema": { "type": "string" } },
+        { "name": "prompt_type", "in": "query", "schema": { "type": "string" } },
+        { "name": "tag", "in": "query", "schema": { "type": "string" } },
+        { "name": "source_type", "in": "query", "schema": { "type": "string" } },
+        { "name": "favorite", "in": "query", "schema": { "type": "boolean" } }
+      ], "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "post": { "operationId": "createCreativePrompt", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/prompts/{prompt_id}": {
+      "get": { "operationId": "getCreativePrompt", "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "patch": { "operationId": "updateCreativePrompt", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "delete": { "operationId": "deleteCreativePrompt", "responses": { "200": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/prompts/{prompt_id}/duplicate": { "post": { "operationId": "duplicateCreativePrompt", "responses": { "201": { "$ref": "#/components/responses/Success" } } } },
+    "/prompts/{prompt_id}/revisions": { "get": { "operationId": "listCreativePromptRevisions", "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/canvases": {
+      "get": { "operationId": "listCreativeCanvases", "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "post": { "operationId": "createCreativeCanvas", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/canvases/{project_id}": {
+      "get": { "operationId": "getCreativeCanvas", "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "put": { "operationId": "updateCreativeCanvas", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "deleteCreativeCanvas", "responses": { "200": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/canvases/{project_id}/duplicate": { "post": { "operationId": "duplicateCreativeCanvas", "responses": { "201": { "$ref": "#/components/responses/Success" } } } },
+    "/canvases/{project_id}/revisions": { "get": { "operationId": "listCreativeCanvasRevisions", "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/canvases/{project_id}/revisions/{revision_id}/restore": { "post": { "operationId": "restoreCreativeCanvasRevision", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
+    "/video-projects/{project_id}/shots/{shot_id}/video-reference": { "post": { "operationId": "bindCreativeVideoReference", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } } }
+  },
+  "components": {
+    "parameters": {
+      "IntentId": { "name": "intent_id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "JobId": { "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "AssetId": { "name": "asset_id", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "requestBodies": {
+      "Json": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
+    },
+    "responses": {
+      "Success": { "description": "FYJIT success envelope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessEnvelope" } } } },
+      "Error": { "description": "FYJIT error envelope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+    },
+    "schemas": {
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": { "success": { "const": true }, "message": { "type": "string" }, "data": true }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["success", "code", "message"],
+        "properties": { "success": { "const": false }, "code": { "type": "string" }, "message": { "type": "string" } }
+      }
+    }
+  }
+}

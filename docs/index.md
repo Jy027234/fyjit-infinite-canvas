@@ -6,7 +6,7 @@
 - [功能介绍](/docs/overview/features)
 - [Render 部署](/docs/overview/render)
 - [Docker 部署](/docs/overview/docker)
-- [第三方 GitHub 提示词仓库](/docs/overview/third-party-prompt-repositories)
+- [上游第三方提示词来源说明](/docs/overview/third-party-prompt-repositories)
 
 ## 操作手册
 
@@ -37,8 +37,8 @@
 
 ## 说明
 
-- 当前画布项目和“我的素材”主要保存在浏览器本地，跨设备可自行配置 WebDAV 同步。
-- AI API Key 保存在浏览器本地，并由前端直接请求 OpenAI 兼容接口。
+- 本派生版本必须与 FYJIT 主站同域部署；画布、素材、任务和提示词由 `/api/creative` 持久化。
+- 浏览器不保存或接收上游 AI API Key，所有模型请求都经过 FYJIT Relay、计费和审计。
 
 ## 原理说明
 

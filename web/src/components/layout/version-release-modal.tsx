@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
 import { Modal, Tag, Timeline } from "antd";
 import { useVersionCheck } from "@/hooks/use-version-check";
-import { APP_VERSION } from "@/constant/env";
+import { APP_VERSION, PUBLIC_SOURCE_URL } from "@/constant/env";
+import { SOURCE_COMMIT } from "@/constant/runtime-config";
 
 function getTagColor(type: string) {
     if (type === "新增") return "green";
@@ -57,6 +58,15 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                         <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{latestVersion}</div>
                     </div>
                 </div>
+                <a
+                    href={PUBLIC_SOURCE_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mb-5 block rounded-lg border border-stone-200 p-3 text-sm text-stone-700 transition hover:border-stone-400 dark:border-stone-800 dark:text-stone-300 dark:hover:border-stone-600"
+                >
+                    <span className="block text-xs text-stone-500 dark:text-stone-400">本服务对应源码</span>
+                    <span className="mt-1 block font-mono text-xs">{SOURCE_COMMIT}</span>
+                </a>
                 <div className="max-h-[56vh] overflow-y-auto pr-2">
                     <Timeline
                         items={releases.map((release) => ({

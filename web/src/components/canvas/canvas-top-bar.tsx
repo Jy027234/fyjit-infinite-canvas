@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, Camera, Download, History, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -23,6 +23,8 @@ export function CanvasTopBar({
     onCreateProject,
     onDeleteProject,
     onExportProject,
+    onCreateSnapshot,
+    onOpenVersionHistory,
     onImportImage,
     onOpenPlugins,
     onUndo,
@@ -45,6 +47,8 @@ export function CanvasTopBar({
     onCreateProject: () => void;
     onDeleteProject: () => void;
     onExportProject: () => void;
+    onCreateSnapshot: () => void;
+    onOpenVersionHistory: () => void;
     onImportImage: () => void;
     onOpenPlugins: () => void;
     onUndo: () => void;
@@ -97,6 +101,8 @@ export function CanvasTopBar({
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入资产", onClick: onImportImage },
                                 { key: "export", icon: <Download className="size-4" />, label: "导出当前画布", onClick: onExportProject },
+                                { key: "snapshot", icon: <Camera className="size-4" />, label: "创建版本快照", onClick: onCreateSnapshot },
+                                { key: "versions", icon: <History className="size-4" />, label: "版本历史", onClick: onOpenVersionHistory },
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },

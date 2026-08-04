@@ -6,4 +6,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    environment:
+      CREATIVE_API_BASE: /api/creative
+      FYJIT_HOME_URL: http://localhost:3000/
+      SOURCE_COMMIT: local
     restart: unless-stopped

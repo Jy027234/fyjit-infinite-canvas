@@ -119,7 +119,7 @@ export async function ensurePluginsLoaded() {
 async function loadLocalPlugins() {
     let urls: unknown;
     try {
-        const response = await fetch("/plugins/index.json");
+        const response = await fetch(`${import.meta.env.BASE_URL}plugins/index.json`);
         if (!response.ok) return;
         urls = await response.json();
     } catch {
@@ -155,7 +155,10 @@ async function loadLocalPlugins() {
 async function loadDevPlugins() {
     const raw = import.meta.env.VITE_DEV_PLUGINS;
     if (!raw) return;
-    const urls = raw.split(",").map((item) => item.trim()).filter(Boolean);
+    const urls = raw
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
     await Promise.all(
         urls.map(async (url) => {
             try {

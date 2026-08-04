@@ -8,6 +8,10 @@
 type RuntimeConfig = {
     ANALYTICS_GA4_ID?: string; // GA4 衡量 ID（G-XXXX）
     ANALYTICS_BAIDU_ID?: string; // 百度统计站点 ID
+    CREATIVE_API_BASE?: string;
+    FYJIT_HOME_URL?: string;
+    SOURCE_COMMIT?: string;
+    SOURCE_URL?: string;
 };
 
 declare global {
@@ -27,4 +31,7 @@ function read(key: keyof RuntimeConfig, buildTime: string | undefined, fallback 
 
 export const ANALYTICS_GA4_ID = read("ANALYTICS_GA4_ID", import.meta.env.VITE_ANALYTICS_GA4_ID);
 export const ANALYTICS_BAIDU_ID = read("ANALYTICS_BAIDU_ID", import.meta.env.VITE_ANALYTICS_BAIDU_ID);
-
+export const CREATIVE_API_BASE = read("CREATIVE_API_BASE", import.meta.env.VITE_CREATIVE_API_BASE, "/api/creative").replace(/\/+$/, "");
+export const FYJIT_HOME_URL = read("FYJIT_HOME_URL", import.meta.env.VITE_FYJIT_HOME_URL, "/");
+export const SOURCE_COMMIT = read("SOURCE_COMMIT", import.meta.env.VITE_SOURCE_COMMIT, "unknown");
+export const SOURCE_URL = read("SOURCE_URL", import.meta.env.VITE_SOURCE_URL);

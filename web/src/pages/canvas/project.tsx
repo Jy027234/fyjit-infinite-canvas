@@ -1,20 +1,32 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
-import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
-import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import {
+    requestCreativeAudioGeneration as requestAudioGeneration,
+    requestCreativeEdit as requestEdit,
+    requestCreativeGeneration as requestGeneration,
+    requestCreativeText as requestImageQuestion,
+    requestCreativeVideoGeneration as requestVideoGeneration,
+    storeCreativeGeneratedAudio as storeGeneratedAudio,
+    storeCreativeGeneratedVideo as storeGeneratedVideo,
+} from "@/services/canvas-creative";
+import {
+    createCreativeTextAsset,
+    fetchCreativeCanvasRevisions,
+    uploadCreativeAsset,
+    type CreativeCanvasRevision,
+} from "@/services/api/creative";
+import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
-import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
+import { readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useFyjitStore } from "@/stores/use-fyjit-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { App, Button, Modal } from "antd";
@@ -76,7 +88,6 @@ import {
     type CanvasAssistantSession,
     type CanvasConnection,
     type CanvasNodeData,
-    type CanvasNodeMetadata,
     type CanvasNodeTypeId,
     type ConnectionHandle,
     type ContextMenuState,
@@ -84,8 +95,6 @@ import {
     type SelectionBox,
     type ViewportTransform,
 } from "@/types/canvas";
-import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio } from "@/types/media";
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
 registerBuiltinNodes();
@@ -130,6 +139,11 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 1. 只输出提示词正文，不要解释。
 2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。
 3. 尽量写成可直接用于生图模型的完整提示词。`;
+
+function creativeAssetIdFromUrl(value: string) {
+    const match = value.match(/\/api\/creative\/assets\/([^/]+)\/(?:content|preview)(?:\?|$)/);
+    return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
 
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
@@ -184,14 +198,20 @@ function InfiniteCanvasPage() {
         initialSelectedNodes: [],
     });
 
-    const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const fyjitModels = useFyjitStore((state) => state.models);
+    const isAiConfigReady = useCallback((_config: AiConfig, selectedModel: string) => {
+        const modelName = selectedModel.includes("::") ? selectedModel.slice(selectedModel.indexOf("::") + 2) : selectedModel;
+        return fyjitModels.some((item) => item.id === modelName && item.capabilities.some((capability) => capability === "text_generation" || capability === "image_generation" || capability === "video_generation"));
+    }, [fyjitModels]);
+    const openConfigDialog = useCallback((open: boolean) => {
+        if (open) message.warning("当前账号没有可用的 FYJIT 模型或本站 Token");
+    }, [message]);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const createProject = useCanvasStore((state) => state.createProject);
+    const snapshotProject = useCanvasStore((state) => state.snapshotProject);
+    const restoreProjectRevision = useCanvasStore((state) => state.restoreProjectRevision);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -243,6 +263,11 @@ function InfiniteCanvasPage() {
     const [isNodeDragging, setIsNodeDragging] = useState(false);
     const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
+    const [projectReloadNonce, setProjectReloadNonce] = useState(0);
+    const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+    const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
+    const [canvasRevisions, setCanvasRevisions] = useState<Array<CreativeCanvasRevision>>([]);
+    const [restoringRevisionId, setRestoringRevisionId] = useState("");
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -351,7 +376,7 @@ function InfiniteCanvasPage() {
             setProjectLoaded(true);
         };
         void restore();
-    }, [hydrated, navigate, openProject, projectId]);
+    }, [hydrated, navigate, openProject, projectId, projectReloadNonce]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
@@ -979,8 +1004,8 @@ function InfiniteCanvasPage() {
         applyHistory(next);
     }, [applyHistory]);
 
-    const createAndOpenProject = useCallback(() => {
-        const id = createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
+    const createAndOpenProject = useCallback(async () => {
+        const id = await createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
         navigate(`/canvas/${id}`);
     }, [createProject, navigate]);
 
@@ -1004,6 +1029,44 @@ function InfiniteCanvasPage() {
             hide();
         }
     }, [message, projectId]);
+
+    const loadVersionHistory = useCallback(async () => {
+        setVersionHistoryOpen(true);
+        setVersionHistoryLoading(true);
+        try {
+            setCanvasRevisions(await fetchCreativeCanvasRevisions(projectId));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "版本历史读取失败");
+        } finally {
+            setVersionHistoryLoading(false);
+        }
+    }, [message, projectId]);
+
+    const restoreRevision = useCallback(
+        (revision: CreativeCanvasRevision) => {
+            modal.confirm({
+                title: `恢复版本 v${revision.version}？`,
+                content: "当前状态会先保留为不可变版本，恢复操作不会删除任何历史记录。",
+                okText: "恢复",
+                cancelText: "取消",
+                onOk: async () => {
+                    setRestoringRevisionId(revision.revision_id);
+                    try {
+                        if (!(await restoreProjectRevision(projectId, revision.revision_id))) throw new Error("画布版本恢复失败");
+                        setProjectReloadNonce((value) => value + 1);
+                        setCanvasRevisions(await fetchCreativeCanvasRevisions(projectId));
+                        message.success(`已恢复版本 v${revision.version}`);
+                    } catch (error) {
+                        message.error(error instanceof Error ? error.message : "画布版本恢复失败");
+                        throw error;
+                    } finally {
+                        setRestoringRevisionId("");
+                    }
+                },
+            });
+        },
+        [message, modal, projectId, restoreProjectRevision],
+    );
 
     const handleCanvasMouseDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1565,48 +1628,33 @@ function InfiniteCanvasPage() {
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
-            if (node.type === CanvasNodeType.Text) {
-                const content = node.metadata?.content?.trim();
-                if (!content) return message.error("没有可保存的文本");
-                addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || "画布文本", coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
-                message.success("已加入我的资产");
-                return;
+            const content = node.metadata?.content?.trim();
+            if (!content) return message.error("当前节点没有可保存的内容");
+            const existingAssetId = node.metadata?.assetId || creativeAssetIdFromUrl(content);
+            if (existingAssetId) return message.info("该节点已在 FYJIT 素材中心");
+            const title = node.metadata?.prompt?.slice(0, 24) || (node.type === CanvasNodeType.Text ? "画布文本" : node.type === CanvasNodeType.Video ? "画布视频" : node.type === CanvasNodeType.Audio ? "画布音频" : "画布图片");
+            try {
+                const asset = node.type === CanvasNodeType.Text
+                    ? await createCreativeTextAsset({ title, content, notes: `来自画布节点 ${node.id}` })
+                    : await fetch(content, { credentials: "include" }).then(async (response) => {
+                          if (!response.ok) throw new Error("画布媒体读取失败");
+                          return uploadCreativeAsset(await response.blob(), title);
+                      });
+                const serverContent = asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`;
+                setNodes((current) => current.map((item) => item.id === node.id ? {
+                    ...item,
+                    metadata: {
+                        ...item.metadata,
+                        assetId: asset.asset_id,
+                        ...(item.type === CanvasNodeType.Text ? {} : { content: serverContent, storageKey: undefined }),
+                    },
+                } : item));
+                message.success("已保存到 FYJIT 素材中心");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "素材保存失败");
             }
-            if (node.type === CanvasNodeType.Video) {
-                if (!node.metadata?.content) return message.error("没有可保存的视频");
-                addAsset({
-                    kind: "video",
-                    title: node.metadata?.prompt?.slice(0, 24) || "画布视频",
-                    coverUrl: "",
-                    tags: [],
-                    source: "Canvas",
-                    data: { url: node.metadata.content, storageKey: node.metadata.storageKey, width: node.width, height: node.height, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "video/mp4" },
-                    metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
-                });
-                message.success("已加入我的资产");
-                return;
-            }
-            if (!node.metadata?.content) return message.error("没有可保存的图片");
-            const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
-            addAsset({
-                kind: "image",
-                title: node.metadata?.prompt?.slice(0, 24) || "画布图片",
-                coverUrl: node.metadata.content,
-                tags: [],
-                source: "Canvas",
-                data: {
-                    dataUrl,
-                    storageKey: node.metadata.storageKey,
-                    width: node.metadata.naturalWidth || node.width,
-                    height: node.metadata.naturalHeight || node.height,
-                    bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
-                    mimeType: node.metadata.mimeType || "image/png",
-                },
-                metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
-            });
-            message.success("已加入我的资产");
         },
-        [addAsset, message],
+        [message],
     );
 
     const createImageReversePromptNodes = useCallback(
@@ -1745,7 +1793,7 @@ function InfiniteCanvasPage() {
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
                 const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal }).then((items) => items[0]);
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
@@ -1827,7 +1875,7 @@ function InfiniteCanvasPage() {
                     undefined,
                     { signal: controller.signal },
                 ).then((items) => items[0]);
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
@@ -2062,7 +2110,7 @@ function InfiniteCanvasPage() {
                     const image = refs.length
                         ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal }).then((items) => items[0])
                         : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal }).then((items) => items[0]);
-                    const uploaded = await uploadImage(image.dataUrl);
+                    const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                     setNodes((prev) =>
                         prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
@@ -2209,7 +2257,7 @@ function InfiniteCanvasPage() {
                                 const image = referenceImages.length
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
-                                const uploaded = await uploadImage(image.dataUrl);
+                                const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
                                     const root = prev.find((node) => node.id === rootId);
@@ -2401,6 +2449,7 @@ function InfiniteCanvasPage() {
                 const answers = await Promise.all(
                     textTargetIds.map((targetNodeId) => {
                         let localStreamed = "";
+                        let assetId: string | undefined;
                         return requestImageQuestion(
                             generationConfig,
                             buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }),
@@ -2410,18 +2459,18 @@ function InfiniteCanvasPage() {
                                 if (isConfigNode) return;
                                 setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
                             },
-                            { signal: controller.signal },
+                            { signal: controller.signal, onAssetId: (value) => { assetId = value; } },
                         )
-                            .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed }))
+                            .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed, assetId }))
                             .finally(() => finishGenerationRequest(targetNodeId, controller));
                     }),
                 );
                 if (controller.signal.aborted) return;
-                const answerByNodeId = new Map(answers.map((item) => [item.nodeId, item.content]));
+                const answerByNodeId = new Map(answers.map((item) => [item.nodeId, item]));
                 setNodes((prev) =>
                     prev.map((node) =>
                         childIds.includes(node.id)
-                            ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
+                            ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id)?.content || streamed, assetId: answerByNodeId.get(node.id)?.assetId, status: NODE_STATUS_SUCCESS } }
                             : node.id === nodeId && isConfigNode
                               ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
                               : node.id === nodeId && !editingTextNode
@@ -2429,7 +2478,7 @@ function InfiniteCanvasPage() {
                                       ...node,
                                       type: CanvasNodeType.Text,
                                       title: prompt.slice(0, 32) || "Generated Text",
-                                      metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, model: generationConfig.model, reasoningEffort: generationConfig.reasoningEffort, status: NODE_STATUS_SUCCESS },
+                                      metadata: { ...node.metadata, content: answerByNodeId.get(node.id)?.content || streamed, assetId: answerByNodeId.get(node.id)?.assetId, model: generationConfig.model, reasoningEffort: generationConfig.reasoningEffort, status: NODE_STATUS_SUCCESS },
                                   }
                                 : node,
                     ),
@@ -2499,6 +2548,7 @@ function InfiniteCanvasPage() {
                 if (node.type === CanvasNodeType.Text) {
                     if (!context) return;
                     let streamed = "";
+                    let assetId: string | undefined;
                     const answer = await requestImageQuestion(
                         generationConfig,
                         buildNodeResponseMessages({ ...context, prompt }),
@@ -2506,9 +2556,9 @@ function InfiniteCanvasPage() {
                             streamed = text;
                             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
                         },
-                        { signal: controller.signal },
+                        { signal: controller.signal, onAssetId: (value) => { assetId = value; } },
                     );
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, assetId, prompt, status: NODE_STATUS_SUCCESS } } : item)));
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
@@ -2548,7 +2598,7 @@ function InfiniteCanvasPage() {
                 const image = useReferenceImages
                     ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal }).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
-                const uploadedImage = await uploadImage(image.dataUrl);
+                const uploadedImage = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
@@ -2639,7 +2689,7 @@ function InfiniteCanvasPage() {
                 position: { x: center.x - config.width / 2, y: center.y - config.height / 2 },
                 width: config.width,
                 height: config.height,
-                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt },
+                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, assetId: image.assetId },
             };
 
             setNodes((prev) => [...prev, node]);
@@ -2651,10 +2701,10 @@ function InfiniteCanvasPage() {
     );
 
     const insertAssistantText = useCallback(
-        (text: string, title?: string) => {
+        (text: string, title?: string, assetId?: string) => {
             const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
             const node = {
-                ...createCanvasNode(CanvasNodeType.Text, center, { content: text, status: NODE_STATUS_SUCCESS }),
+                ...createCanvasNode(CanvasNodeType.Text, center, { content: text, status: NODE_STATUS_SUCCESS, assetId }),
                 title: title || text.slice(0, 32) || "Assistant Text",
             };
 
@@ -2668,7 +2718,7 @@ function InfiniteCanvasPage() {
     const handleAssetInsert = useCallback(
         (payload: InsertAssetPayload) => {
             if (payload.kind === "text") {
-                insertAssistantText(payload.content, payload.title);
+                insertAssistantText(payload.content, payload.title, payload.assetId);
             } else if (payload.kind === "video") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                 const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
@@ -2683,12 +2733,12 @@ function InfiniteCanvasPage() {
                         position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 },
                         width: nextSize.width,
                         height: nextSize.height,
-                        metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
+                        metadata: { content: payload.url, storageKey: payload.storageKey, assetId: payload.assetId, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));
             } else {
-                insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey });
+                insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey, assetId: payload.assetId });
             }
             setAssetPickerOpen(false);
         },
@@ -2783,6 +2833,8 @@ function InfiniteCanvasPage() {
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}
+                    onCreateSnapshot={() => void snapshotProject(projectId).then((succeeded) => succeeded ? message.success("版本快照已创建") : message.error("版本快照创建失败，请处理同步冲突后重试"))}
+                    onOpenVersionHistory={() => void loadVersionHistory()}
                     onImportImage={() => handleUploadRequest()}
                     onOpenPlugins={() => setPluginManagerOpen(true)}
                     onUndo={undoCanvas}
@@ -2791,6 +2843,12 @@ function InfiniteCanvasPage() {
                     compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
                     onToggleAgent={toggleAgentPanel}
                 />
+
+                {currentProject?.syncError ? (
+                    <div role="alert" className="absolute left-1/2 top-14 z-50 max-w-[min(90vw,680px)] -translate-x-1/2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                        {currentProject.syncError}。本地编辑仍保留，请刷新查看服务器版本，或从项目菜单导出副本后再处理冲突。
+                    </div>
+                ) : null}
 
                 <InfiniteCanvas
                     containerRef={containerRef}
@@ -3040,6 +3098,32 @@ function InfiniteCanvasPage() {
                     }
                 >
                     <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
+                </Modal>
+
+                <Modal title="版本历史" open={versionHistoryOpen} footer={null} width={640} onCancel={() => setVersionHistoryOpen(false)}>
+                    <div className="max-h-[60vh] space-y-2 overflow-y-auto pt-2" aria-live="polite">
+                        {versionHistoryLoading ? <p className="py-8 text-center text-sm opacity-60">正在读取版本历史…</p> : null}
+                        {!versionHistoryLoading && !canvasRevisions.length ? <p className="py-8 text-center text-sm opacity-60">暂无版本记录</p> : null}
+                        {canvasRevisions.map((revision, index) => (
+                            <div key={revision.revision_id} className="flex items-center justify-between gap-4 rounded-xl border p-3" style={{ borderColor: theme.node.stroke }}>
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2 font-medium">
+                                        <span>v{revision.version}</span>
+                                        {index === 0 ? <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs dark:bg-white/10">当前</span> : null}
+                                        <span className="text-xs opacity-60">格式 v{revision.schema_version}</span>
+                                    </div>
+                                    <p className="mt-1 truncate text-sm opacity-70">{revision.title} · {new Date(revision.created_at * 1000).toLocaleString()}</p>
+                                </div>
+                                <Button
+                                    disabled={index === 0}
+                                    loading={restoringRevisionId === revision.revision_id}
+                                    onClick={() => restoreRevision(revision)}
+                                >
+                                    恢复此版本
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
                 </Modal>
 
                 <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />

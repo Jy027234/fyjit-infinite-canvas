@@ -1,28 +1,27 @@
 ---
-title: Render 部署
-description: 使用 Render 部署无限画布
+title: 托管平台部署
+description: 部署 FYJIT 创作中心派生前端的边界
 ---
 
-# Render 部署
+# 托管平台部署
 
-点击下面链接即可部署到 Render：
+FYJIT 派生版本不是浏览器直连模型的独立个人工具，不能使用上游的一键 Render 模板直接投入生产。生产部署必须同时具备：
 
-[部署到 Render](https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas)
+- 同域 `/creative/` 子路径与刷新回退；
+- `/api/creative` 到 FYJIT 主服务的受控反向代理；
+- 可复用的 FYJIT 登录会话；
+- 精确指向当前运行 commit 的“本服务对应源码”链接；
+- 不可变的派生镜像引用。
 
 ## 部署步骤
 
-1. 点击 `Deploy to Render`。
-2. 登录 Render，并按页面提示连接 GitHub。
-3. 确认部署。
+1. 按 [Docker 部署](/docs/overview/docker) 构建并发布派生镜像。
+2. 在 FYJIT 网关配置 `/creative/` 静态应用和 `/api/creative` 服务路由。
+3. 设置运行 commit、源码地址和主站返回地址。
+4. 分别验证 `/creative/healthz`、登录恢复、任务恢复和私有资产访问。
 
 部署完成后，打开 Render 分配的 `.onrender.com` 域名即可访问。
 
-## 免费版说明
+## 平台限制
 
-默认使用 Render 免费 Web Service：
-
-- 空闲约 15 分钟后会休眠，下次访问会自动唤醒。
-- 当前主应用数据默认保存在浏览器本地；第三方提示词由浏览器前端直连拉取。
-- 适合体验和演示，不适合长期保存正式数据。
-
-长期使用建议优先部署到 Vercel，或自行配置 WebDAV 同步浏览器本地数据。
+Render、Vercel 或其他静态托管平台只能承载派生前端，不能替代 FYJIT 的登录、任务、Worker、数据库、Relay 和私有资产存储。任何平台都不得回退为浏览器保存密钥或直连上游模型。

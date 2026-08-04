@@ -1,17 +1,14 @@
 import type { NavigateFunction } from "react-router-dom";
 
-import { fetchPrompts } from "@/services/api/prompts";
-import { uploadImage } from "@/services/image-storage";
+import { createCreativeTextAsset, fetchCreativeAssets, fetchCreativePrompts, updateCreativeAsset, uploadCreativeAsset } from "@/services/api/creative";
 import { imageAspectOptions, imageQualityOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
-// 在网页端执行 Agent 的「站点级」工具（画布列表、工作台生成、提示词搜索、资产增删查等）。
-// 这些工具的数据都在浏览器本地（localforage / zustand），因此由本模块直接读写对应 store 后返回结果。
+// 在网页端执行 Agent 的「站点级」工具。创作数据统一读写 FYJIT Creative API。
 
 export const SITE_TOOL_NAMES = [
     "canvas_list_projects",
@@ -156,7 +153,8 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
-        const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
+        const value = normalizeModelOptionValue(input.model, configStore.config.models);
+        if (!value || !configStore.config.modelCapabilities[value]?.includes("image")) throw new Error("所选模型不支持生图或当前账号不可用");
         configStore.updateConfig("imageModel", value);
         applied.model = value;
     }
@@ -204,7 +202,8 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
-        const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
+        const value = normalizeModelOptionValue(input.model, configStore.config.models);
+        if (!value || !configStore.config.modelCapabilities[value]?.includes("video")) throw new Error("所选模型不支持视频或当前账号不可用");
         configStore.updateConfig("videoModel", value);
         applied.model = value;
     }
@@ -239,41 +238,38 @@ async function searchPrompts(input: SiteToolInput) {
     const page = Math.max(1, Math.floor(Number(input.page)) || 1);
     const pageSize = Math.max(1, Math.min(50, Math.floor(Number(input.pageSize)) || 20));
     const tags = Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === "string") : [];
-    const result = await fetchPrompts({ keyword: String(input.keyword || ""), category: String(input.category || "全部"), tag: tags, page, pageSize });
+    const category = String(input.category || "").trim();
+    const result = await fetchCreativePrompts({ search: String(input.keyword || "").trim() || undefined, category: category && category !== "全部" ? category : undefined, page: 1, pageSize: 100 });
+    const filtered = tags.length ? result.items.filter((prompt) => tags.every((tag) => prompt.tags.includes(tag))) : result.items;
+    const start = (page - 1) * pageSize;
     return {
-        total: result.total,
+        total: filtered.length,
         page,
         pageSize,
-        categories: result.categories,
-        tags: result.tags.slice(0, 60),
-        items: result.items.map((prompt) => ({ id: prompt.id, title: prompt.title, prompt: prompt.prompt, category: prompt.category, tags: prompt.tags, coverUrl: prompt.coverUrl, githubUrl: prompt.githubUrl })),
+        categories: [...new Set(result.items.map((prompt) => prompt.category).filter(Boolean))],
+        tags: [...new Set(result.items.flatMap((prompt) => prompt.tags))].slice(0, 60),
+        items: filtered.slice(start, start + pageSize).map((prompt) => ({ id: prompt.prompt_id, title: prompt.title, prompt: prompt.content, negativePrompt: prompt.negative_prompt, category: prompt.category, tags: prompt.tags, version: prompt.version })),
     };
 }
 
-function listAssets(input: SiteToolInput) {
-    const { assets, hydrated } = useAssetStore.getState();
-    if (!hydrated) throw new Error("资产还在加载中，请稍后重试");
-    const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" ? input.kind : "all";
-    const keyword = String(input.keyword || "").trim().toLowerCase();
-    const filtered = assets.filter((asset) => {
-        if (kind !== "all" && asset.kind !== kind) return false;
-        if (!keyword) return true;
-        return [asset.title, asset.note, asset.source, ...asset.tags].filter(Boolean).join(" ").toLowerCase().includes(keyword);
-    });
-    const { page, pageSize, start, end } = paginate(input, filtered.length, 20);
-    const items = filtered.slice(start, end).map((asset) => ({
-        id: asset.id,
-        kind: asset.kind,
+async function listAssets(input: SiteToolInput) {
+    const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" ? String(input.kind).toUpperCase() : undefined;
+    const page = Math.max(1, Math.floor(Number(input.page)) || 1);
+    const pageSize = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize)) || 20));
+    const result = await fetchCreativeAssets({ page, pageSize, type: kind, search: String(input.keyword || "").trim() || undefined });
+    const items = result.items.map((asset) => ({
+        id: asset.asset_id,
+        kind: asset.type.toLowerCase(),
         title: asset.title,
         tags: asset.tags,
-        source: asset.source,
-        note: asset.note,
-        createdAt: asset.createdAt,
-        updatedAt: asset.updatedAt,
-        coverUrl: asset.coverUrl || undefined,
-        content: asset.kind === "text" ? asset.data.content : undefined,
+        source: asset.source_module,
+        note: asset.notes,
+        createdAt: asset.created_at,
+        updatedAt: asset.updated_at,
+        coverUrl: asset.thumbnail_path || asset.preview_path || undefined,
+        content: asset.type === "TEXT" ? asset.content : undefined,
     }));
-    return { total: filtered.length, page, pageSize, items };
+    return { total: result.total, page: result.page, pageSize: result.page_size, items };
 }
 
 async function addAsset(input: SiteToolInput) {
@@ -281,26 +277,26 @@ async function addAsset(input: SiteToolInput) {
     const title = String(input.title || "").trim();
     if (!title) throw new Error("请提供资产标题 title");
     const tags = Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === "string") : [];
-    const source = typeof input.source === "string" ? input.source : "Agent";
     const note = typeof input.note === "string" ? input.note : undefined;
-    const store = useAssetStore.getState();
     if (kind === "text") {
         const content = String(input.content || "").trim();
         if (!content) throw new Error("kind=text 时需要提供 content 文本内容");
-        const id = store.addAsset({ kind: "text", title, coverUrl: "", tags, source, note, data: { content } });
-        return { ok: true, id, kind: "text" };
+        const asset = await createCreativeTextAsset({ title, content, tags, notes: note });
+        return { ok: true, id: asset.asset_id, kind: "text" };
     }
     if (kind === "image") {
         const imageUrl = String(input.imageUrl || "").trim();
         if (!imageUrl) throw new Error("kind=image 时需要提供 imageUrl（图片地址或 dataURL）");
-        let stored;
+        let response: Response;
         try {
-            stored = await uploadImage(imageUrl);
+            response = await fetch(imageUrl, { credentials: "include" });
+            if (!response.ok) throw new Error("image fetch failed");
         } catch {
             throw new Error("无法读取该图片地址，请改用 dataURL 或可跨域访问的图片链接");
         }
-        const id = store.addAsset({ kind: "image", title, coverUrl: stored.url, tags, source, note, data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType } });
-        return { ok: true, id, kind: "image" };
+        const asset = await uploadCreativeAsset(await response.blob(), title);
+        if (tags.length || note) await updateCreativeAsset(asset.asset_id, { tags, notes: note });
+        return { ok: true, id: asset.asset_id, kind: "image" };
     }
     throw new Error("assets_add 仅支持 kind=text 或 kind=image");
 }

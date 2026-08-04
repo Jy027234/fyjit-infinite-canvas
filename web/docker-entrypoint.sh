@@ -13,10 +13,22 @@ sanitize_id() {
 
 GA4_ID=$(sanitize_id "${ANALYTICS_GA4_ID:-}")
 BAIDU_ID=$(sanitize_id "${ANALYTICS_BAIDU_ID:-}")
+CREATIVE_API_BASE=${CREATIVE_API_BASE:-/api/creative}
+FYJIT_HOME_URL=${FYJIT_HOME_URL:-/}
+SOURCE_COMMIT=${SOURCE_COMMIT:-unknown}
+SOURCE_URL=${SOURCE_URL:-}
 
-cat > /usr/share/nginx/html/config.js <<EOF
+escape_js() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/</\\u003c/g; s/>/\\u003e/g'
+}
+
+cat > /usr/share/nginx/html/creative/config.js <<EOF
 window.__RUNTIME_CONFIG__ = {
   ANALYTICS_GA4_ID: "${GA4_ID}",
-  ANALYTICS_BAIDU_ID: "${BAIDU_ID}"
+  ANALYTICS_BAIDU_ID: "${BAIDU_ID}",
+  CREATIVE_API_BASE: "$(escape_js "$CREATIVE_API_BASE")",
+  FYJIT_HOME_URL: "$(escape_js "$FYJIT_HOME_URL")",
+  SOURCE_COMMIT: "$(escape_js "$SOURCE_COMMIT")",
+  SOURCE_URL: "$(escape_js "$SOURCE_URL")"
 };
 EOF
