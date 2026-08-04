@@ -22,7 +22,7 @@ type VersionReleaseModalProps = {
 };
 
 export function VersionReleaseModal({ className, style }: VersionReleaseModalProps) {
-    const { open, setOpen, openReleaseModal, latestVersion, releases, checking, hasNewVersion, checkLatestRelease } = useVersionCheck();
+    const { open, setOpen, openReleaseModal, latestVersion, releases } = useVersionCheck();
 
     return (
         <>
@@ -33,10 +33,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                 onClick={openReleaseModal}
                 title="查看版本更新"
             >
-                <span className="relative inline-flex">
-                    {APP_VERSION}
-                    {hasNewVersion ? <span className="absolute -right-1.5 -top-1 size-1.5 rounded-full bg-green-500" /> : null}
-                </span>
+                {APP_VERSION}
             </button>
             <Modal title="版本更新" open={open} width={680} centered footer={null} onCancel={() => setOpen(false)}>
                 <div className="mb-5 grid grid-cols-2 gap-3">
@@ -45,16 +42,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                         <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{APP_VERSION}</div>
                     </div>
                     <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="text-xs text-stone-500 dark:text-stone-400">最新版本</div>
-                            <button
-                                type="button"
-                                className="cursor-pointer bg-transparent p-0 text-[11px] font-normal text-stone-400 underline-offset-2 transition hover:text-stone-700 hover:underline dark:text-stone-500 dark:hover:text-stone-300"
-                                onClick={() => void checkLatestRelease(true)}
-                            >
-                                {checking ? "检查中..." : "检查更新"}
-                            </button>
-                        </div>
+                        <div className="text-xs text-stone-500 dark:text-stone-400">镜像内置发布版本</div>
                         <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{latestVersion}</div>
                     </div>
                 </div>

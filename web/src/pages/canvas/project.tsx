@@ -12,18 +12,14 @@ import {
     storeCreativeGeneratedAudio as storeGeneratedAudio,
     storeCreativeGeneratedVideo as storeGeneratedVideo,
 } from "@/services/canvas-creative";
-import {
-    createCreativeTextAsset,
-    fetchCreativeCanvasRevisions,
-    uploadCreativeAsset,
-    type CreativeCanvasRevision,
-} from "@/services/api/creative";
+import { createCreativeTextAsset, fetchCreativeCanvasRevisions, uploadCreativeAsset, type CreativeCanvasRevision } from "@/services/api/creative";
 import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { filterCanvasNodesInViewport } from "@/lib/canvas/canvas-viewport";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useFyjitStore } from "@/stores/use-fyjit-store";
@@ -200,13 +196,19 @@ function InfiniteCanvasPage() {
 
     const effectiveConfig = useEffectiveConfig();
     const fyjitModels = useFyjitStore((state) => state.models);
-    const isAiConfigReady = useCallback((_config: AiConfig, selectedModel: string) => {
-        const modelName = selectedModel.includes("::") ? selectedModel.slice(selectedModel.indexOf("::") + 2) : selectedModel;
-        return fyjitModels.some((item) => item.id === modelName && item.capabilities.some((capability) => capability === "text_generation" || capability === "image_generation" || capability === "video_generation"));
-    }, [fyjitModels]);
-    const openConfigDialog = useCallback((open: boolean) => {
-        if (open) message.warning("当前账号没有可用的 FYJIT 模型或本站 Token");
-    }, [message]);
+    const isAiConfigReady = useCallback(
+        (_config: AiConfig, selectedModel: string) => {
+            const modelName = selectedModel.includes("::") ? selectedModel.slice(selectedModel.indexOf("::") + 2) : selectedModel;
+            return fyjitModels.some((item) => item.id === modelName && item.capabilities.some((capability) => capability === "text_generation" || capability === "image_generation" || capability === "video_generation"));
+        },
+        [fyjitModels],
+    );
+    const openConfigDialog = useCallback(
+        (open: boolean) => {
+            if (open) message.warning("当前账号没有可用的 FYJIT 模型或本站 Token");
+        },
+        [message],
+    );
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const createProject = useCanvasStore((state) => state.createProject);
@@ -589,16 +591,11 @@ function InfiniteCanvasPage() {
     );
 
     const visibleNodes = useMemo(() => {
-        const padding = 280;
         const rect = containerRef.current?.getBoundingClientRect();
         const width = rect?.width || size.width;
         const height = rect?.height || size.height;
-        const viewLeft = -viewport.x / viewport.k - padding;
-        const viewTop = -viewport.y / viewport.k - padding;
-        const viewRight = viewLeft + width / viewport.k + padding * 2;
-        const viewBottom = viewTop + height / viewport.k + padding * 2;
-
-        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
+        const renderableNodes = nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds));
+        return filterCanvasNodesInViewport(renderableNodes, viewport, { width, height });
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
@@ -1440,7 +1437,8 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]"))
+                return;
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
@@ -1634,21 +1632,28 @@ function InfiniteCanvasPage() {
             if (existingAssetId) return message.info("该节点已在 FYJIT 素材中心");
             const title = node.metadata?.prompt?.slice(0, 24) || (node.type === CanvasNodeType.Text ? "画布文本" : node.type === CanvasNodeType.Video ? "画布视频" : node.type === CanvasNodeType.Audio ? "画布音频" : "画布图片");
             try {
-                const asset = node.type === CanvasNodeType.Text
-                    ? await createCreativeTextAsset({ title, content, notes: `来自画布节点 ${node.id}` })
-                    : await fetch(content, { credentials: "include" }).then(async (response) => {
-                          if (!response.ok) throw new Error("画布媒体读取失败");
-                          return uploadCreativeAsset(await response.blob(), title);
-                      });
+                const asset =
+                    node.type === CanvasNodeType.Text
+                        ? await createCreativeTextAsset({ title, content, notes: `来自画布节点 ${node.id}` })
+                        : await fetch(content, { credentials: "include" }).then(async (response) => {
+                              if (!response.ok) throw new Error("画布媒体读取失败");
+                              return uploadCreativeAsset(await response.blob(), title);
+                          });
                 const serverContent = asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`;
-                setNodes((current) => current.map((item) => item.id === node.id ? {
-                    ...item,
-                    metadata: {
-                        ...item.metadata,
-                        assetId: asset.asset_id,
-                        ...(item.type === CanvasNodeType.Text ? {} : { content: serverContent, storageKey: undefined }),
-                    },
-                } : item));
+                setNodes((current) =>
+                    current.map((item) =>
+                        item.id === node.id
+                            ? {
+                                  ...item,
+                                  metadata: {
+                                      ...item.metadata,
+                                      assetId: asset.asset_id,
+                                      ...(item.type === CanvasNodeType.Text ? {} : { content: serverContent, storageKey: undefined }),
+                                  },
+                              }
+                            : item,
+                    ),
+                );
                 message.success("已保存到 FYJIT 素材中心");
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "素材保存失败");
@@ -1901,9 +1906,7 @@ function InfiniteCanvasPage() {
 
     const handleImageInputChange = useCallback(
         async (event: ReactChangeEvent<HTMLInputElement>) => {
-            const files = Array.from(event.target.files || []).filter(
-                (f) => f.type.startsWith("image/") || f.type.startsWith("video/") || isAudioFile(f),
-            );
+            const files = Array.from(event.target.files || []).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || isAudioFile(f));
             if (!files.length) {
                 uploadTargetRef.current = null;
                 event.target.value = "";
@@ -1911,12 +1914,7 @@ function InfiniteCanvasPage() {
             }
 
             const target = uploadTargetRef.current;
-            const basePosition =
-                target?.position ||
-                screenToCanvas(
-                    (containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2,
-                    (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2,
-                );
+            const basePosition = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
             const STAGGER = 40; // 多文件时的偏移间距
 
             // 如果有替换目标节点，第一个文件替换它，其余在附近新建
@@ -2038,9 +2036,7 @@ function InfiniteCanvasPage() {
     const handleDrop = useCallback(
         (event: ReactDragEvent<HTMLDivElement>) => {
             event.preventDefault();
-            const files = Array.from(event.dataTransfer.files).filter(
-                (item) => item.type.startsWith("image/") || item.type.startsWith("video/") || isAudioFile(item),
-            );
+            const files = Array.from(event.dataTransfer.files).filter((item) => item.type.startsWith("image/") || item.type.startsWith("video/") || isAudioFile(item));
             if (!files.length) return;
 
             const basePos = screenToCanvas(event.clientX, event.clientY);
@@ -2147,7 +2143,8 @@ function InfiniteCanvasPage() {
                 return;
             }
             let pendingChildIds: string[] = [];
-            if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
+            if (markSourceStatus)
+                setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
 
             try {
                 if (mode === "image") {
@@ -2459,7 +2456,12 @@ function InfiniteCanvasPage() {
                                 if (isConfigNode) return;
                                 setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
                             },
-                            { signal: controller.signal, onAssetId: (value) => { assetId = value; } },
+                            {
+                                signal: controller.signal,
+                                onAssetId: (value) => {
+                                    assetId = value;
+                                },
+                            },
                         )
                             .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed, assetId }))
                             .finally(() => finishGenerationRequest(targetNodeId, controller));
@@ -2478,7 +2480,14 @@ function InfiniteCanvasPage() {
                                       ...node,
                                       type: CanvasNodeType.Text,
                                       title: prompt.slice(0, 32) || "Generated Text",
-                                      metadata: { ...node.metadata, content: answerByNodeId.get(node.id)?.content || streamed, assetId: answerByNodeId.get(node.id)?.assetId, model: generationConfig.model, reasoningEffort: generationConfig.reasoningEffort, status: NODE_STATUS_SUCCESS },
+                                      metadata: {
+                                          ...node.metadata,
+                                          content: answerByNodeId.get(node.id)?.content || streamed,
+                                          assetId: answerByNodeId.get(node.id)?.assetId,
+                                          model: generationConfig.model,
+                                          reasoningEffort: generationConfig.reasoningEffort,
+                                          status: NODE_STATUS_SUCCESS,
+                                      },
                                   }
                                 : node,
                     ),
@@ -2556,7 +2565,12 @@ function InfiniteCanvasPage() {
                             streamed = text;
                             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
                         },
-                        { signal: controller.signal, onAssetId: (value) => { assetId = value; } },
+                        {
+                            signal: controller.signal,
+                            onAssetId: (value) => {
+                                assetId = value;
+                            },
+                        },
                     );
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, assetId, prompt, status: NODE_STATUS_SUCCESS } } : item)));
                     return;
@@ -2689,7 +2703,7 @@ function InfiniteCanvasPage() {
                 position: { x: center.x - config.width / 2, y: center.y - config.height / 2 },
                 width: config.width,
                 height: config.height,
-                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt, assetId: image.assetId },
+                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), thumbnailUrl: image.thumbnailUrl, prompt: image.prompt, assetId: image.assetId },
             };
 
             setNodes((prev) => [...prev, node]);
@@ -2733,12 +2747,12 @@ function InfiniteCanvasPage() {
                         position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 },
                         width: nextSize.width,
                         height: nextSize.height,
-                        metadata: { content: payload.url, storageKey: payload.storageKey, assetId: payload.assetId, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
+                        metadata: { content: payload.url, posterUrl: payload.posterUrl, storageKey: payload.storageKey, assetId: payload.assetId, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));
             } else {
-                insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey, assetId: payload.assetId });
+                void insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, thumbnailUrl: payload.thumbnailUrl, storageKey: payload.storageKey, assetId: payload.assetId });
             }
             setAssetPickerOpen(false);
         },
@@ -2833,7 +2847,7 @@ function InfiniteCanvasPage() {
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}
-                    onCreateSnapshot={() => void snapshotProject(projectId).then((succeeded) => succeeded ? message.success("版本快照已创建") : message.error("版本快照创建失败，请处理同步冲突后重试"))}
+                    onCreateSnapshot={() => void snapshotProject(projectId).then((succeeded) => (succeeded ? message.success("版本快照已创建") : message.error("版本快照创建失败，请处理同步冲突后重试")))}
                     onOpenVersionHistory={() => void loadVersionHistory()}
                     onImportImage={() => handleUploadRequest()}
                     onOpenPlugins={() => setPluginManagerOpen(true)}
@@ -2845,7 +2859,10 @@ function InfiniteCanvasPage() {
                 />
 
                 {currentProject?.syncError ? (
-                    <div role="alert" className="absolute left-1/2 top-14 z-50 max-w-[min(90vw,680px)] -translate-x-1/2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                    <div
+                        role="alert"
+                        className="absolute left-1/2 top-14 z-50 max-w-[min(90vw,680px)] -translate-x-1/2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+                    >
                         {currentProject.syncError}。本地编辑仍保留，请刷新查看服务器版本，或从项目菜单导出副本后再处理冲突。
                     </div>
                 ) : null}
@@ -3112,13 +3129,11 @@ function InfiniteCanvasPage() {
                                         {index === 0 ? <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs dark:bg-white/10">当前</span> : null}
                                         <span className="text-xs opacity-60">格式 v{revision.schema_version}</span>
                                     </div>
-                                    <p className="mt-1 truncate text-sm opacity-70">{revision.title} · {new Date(revision.created_at * 1000).toLocaleString()}</p>
+                                    <p className="mt-1 truncate text-sm opacity-70">
+                                        {revision.title} · {new Date(revision.created_at * 1000).toLocaleString()}
+                                    </p>
                                 </div>
-                                <Button
-                                    disabled={index === 0}
-                                    loading={restoringRevisionId === revision.revision_id}
-                                    onClick={() => restoreRevision(revision)}
-                                >
+                                <Button disabled={index === 0} loading={restoringRevisionId === revision.revision_id} onClick={() => restoreRevision(revision)}>
                                     恢复此版本
                                 </Button>
                             </div>

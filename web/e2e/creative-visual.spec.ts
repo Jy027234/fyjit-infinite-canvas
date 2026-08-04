@@ -138,7 +138,27 @@ test("image batches create independently settled jobs and preserve negative prom
     });
     await page.route("**/api/creative/assets/result-*", (route) => {
         const id = new URL(route.request().url()).pathname.split("/").at(-1) || "result-1";
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { asset_id: id, user_id: 1001, type: "IMAGE", title: id, status: "READY", preview_path: imageFixture(id, "#dbeafe", "#0f766e"), mime_type: "image/svg+xml", width: 1024, height: 1024, size_bytes: 16384, created_at: 1785700000, updated_at: 1785700000 } }) });
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    asset_id: id,
+                    user_id: 1001,
+                    type: "IMAGE",
+                    title: id,
+                    status: "READY",
+                    preview_path: imageFixture(id, "#dbeafe", "#0f766e"),
+                    mime_type: "image/svg+xml",
+                    width: 1024,
+                    height: 1024,
+                    size_bytes: 16384,
+                    created_at: 1785700000,
+                    updated_at: 1785700000,
+                },
+            }),
+        });
     });
 
     await page.goto("/creative/image");
@@ -173,7 +193,10 @@ test("video history restores a pending job and preserves terminal states", async
             return route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ success: true, data: { ...creativeVideoJobFixture("recover", "SUCCEEDED", "关闭页面后恢复"), result_asset_ids: ["recovered-video"], actual_quota: 12000, actual_cost: 0.12, billing_status: "SETTLED", usage_request_id: "request-recover" } }),
+                body: JSON.stringify({
+                    success: true,
+                    data: { ...creativeVideoJobFixture("recover", "SUCCEEDED", "关闭页面后恢复"), result_asset_ids: ["recovered-video"], actual_quota: 12000, actual_cost: 0.12, billing_status: "SETTLED", usage_request_id: "request-recover" },
+                }),
             });
         }
         const listedJobs = recovered
@@ -181,11 +204,31 @@ test("video history restores a pending job and preserves terminal states", async
             : jobs;
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: listedJobs, total: listedJobs.length, page: 1, page_size: 100 } }) });
     });
-    await page.route("**/api/creative/assets/recovered-video", (route) => route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ success: true, data: { asset_id: "recovered-video", user_id: 1001, type: "VIDEO", title: "已恢复视频", status: "READY", preview_path: "/api/creative/assets/recovered-video/content", thumbnail_path: imageFixture("恢复", "#d1fae5", "#047857"), mime_type: "video/mp4", width: 1280, height: 720, duration: 6, size_bytes: 5242880, created_at: 1785700000, updated_at: 1785700001 } }),
-    }));
+    await page.route("**/api/creative/assets/recovered-video", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    asset_id: "recovered-video",
+                    user_id: 1001,
+                    type: "VIDEO",
+                    title: "已恢复视频",
+                    status: "READY",
+                    preview_path: "/api/creative/assets/recovered-video/content",
+                    thumbnail_path: imageFixture("恢复", "#d1fae5", "#047857"),
+                    mime_type: "video/mp4",
+                    width: 1280,
+                    height: 720,
+                    duration: 6,
+                    size_bytes: 5242880,
+                    created_at: 1785700000,
+                    updated_at: 1785700001,
+                },
+            }),
+        }),
+    );
 
     await page.goto("/creative/video");
     await expect(page.getByText("已取消", { exact: true })).toBeVisible();
@@ -208,10 +251,34 @@ test("asset center filters and restores trash on mobile", async ({ page }) => {
         }
         if (route.request().method() !== "GET" || !url.pathname.endsWith("/assets")) return route.fallback();
         assetQueries.push(new URLSearchParams(url.search));
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: {
-            items: [{ asset_id: "trash-image", user_id: 1001, type: "IMAGE", title: "待恢复素材", status: "READY", source_module: "image-workbench", model: "image-v2", favorite: true, preview_path: imageFixture("恢复", "#fee2e2", "#b91c1c"), mime_type: "image/svg+xml", created_at: 1785700000, updated_at: 1785700000 }],
-            total: 1, page: 1, page_size: 24,
-        } }) });
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    items: [
+                        {
+                            asset_id: "trash-image",
+                            user_id: 1001,
+                            type: "IMAGE",
+                            title: "待恢复素材",
+                            status: "READY",
+                            source_module: "image-workbench",
+                            model: "image-v2",
+                            favorite: true,
+                            preview_path: imageFixture("恢复", "#fee2e2", "#b91c1c"),
+                            mime_type: "image/svg+xml",
+                            created_at: 1785700000,
+                            updated_at: 1785700000,
+                        },
+                    ],
+                    total: 1,
+                    page: 1,
+                    page_size: 24,
+                },
+            }),
+        });
     });
 
     await page.goto("/creative/assets");
@@ -233,12 +300,34 @@ test("asset center hands text to Character Studio and video to FilmGen", async (
     await page.route("**/api/creative/assets**", async (route) => {
         const url = new URL(route.request().url());
         if (route.request().method() !== "GET" || !url.pathname.endsWith("/assets")) return route.fallback();
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: {
-            items: [
-                { asset_id: "story-brief", user_id: 1001, type: "TEXT", title: "角色设定", content: "一位守护星海的年轻领航员", status: "READY", source_module: "manual", created_at: 1785700000, updated_at: 1785700000 },
-                { asset_id: "film-clip", user_id: 1001, type: "VIDEO", title: "片段素材", status: "READY", source_module: "video-workbench", thumbnail_path: imageFixture("片段", "#ede9fe", "#7c3aed"), preview_path: "/api/creative/assets/film-clip/content", mime_type: "video/mp4", created_at: 1785700100, updated_at: 1785700100 },
-            ], total: 2, page: 1, page_size: 24,
-        } }) });
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    items: [
+                        { asset_id: "story-brief", user_id: 1001, type: "TEXT", title: "角色设定", content: "一位守护星海的年轻领航员", status: "READY", source_module: "manual", created_at: 1785700000, updated_at: 1785700000 },
+                        {
+                            asset_id: "film-clip",
+                            user_id: 1001,
+                            type: "VIDEO",
+                            title: "片段素材",
+                            status: "READY",
+                            source_module: "video-workbench",
+                            thumbnail_path: imageFixture("片段", "#ede9fe", "#7c3aed"),
+                            preview_path: "/api/creative/assets/film-clip/content",
+                            mime_type: "video/mp4",
+                            created_at: 1785700100,
+                            updated_at: 1785700100,
+                        },
+                    ],
+                    total: 2,
+                    page: 1,
+                    page_size: 24,
+                },
+            }),
+        });
     });
     await page.route("**/api/creative/intents", async (route) => {
         const request = route.request().postDataJSON() as { kind: string; payload: Record<string, unknown> };
@@ -272,19 +361,57 @@ test("prompt library preserves source attribution and imports owned JSON", async
             return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { prompt_id: "external-prompt" } }) });
         }
         if (url.pathname.endsWith("/revisions")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: [] }) });
-        if (route.request().method() === "GET" && url.pathname.endsWith("/prompts")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: {
-            items: [{ prompt_id: "external-prompt", user_id: 1001, title: "带来源的电影提示词", content: "电影感山谷", prompt_type: "image", category: "image", tags: ["cinematic"], variables: [], favorite: false, version: 1, source_type: "external", author_name: "Example Creator", source_url: "https://example.com/prompt", source_license: "CC-BY-4.0", allowed_uses: "署名后允许商用", created_at: 1785700000, updated_at: 1785700000 }],
-            total: 1, page: 1, page_size: 24,
-        } }) });
+        if (route.request().method() === "GET" && url.pathname.endsWith("/prompts"))
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    success: true,
+                    data: {
+                        items: [
+                            {
+                                prompt_id: "external-prompt",
+                                user_id: 1001,
+                                title: "带来源的电影提示词",
+                                content: "电影感山谷",
+                                prompt_type: "image",
+                                category: "image",
+                                tags: ["cinematic"],
+                                variables: [],
+                                favorite: false,
+                                version: 1,
+                                source_type: "external",
+                                author_name: "Example Creator",
+                                source_url: "https://example.com/prompt",
+                                source_license: "CC-BY-4.0",
+                                allowed_uses: "署名后允许商用",
+                                created_at: 1785700000,
+                                updated_at: 1785700000,
+                            },
+                        ],
+                        total: 1,
+                        page: 1,
+                        page_size: 24,
+                    },
+                }),
+            });
         return route.fallback();
     });
     await page.route("**/api/creative/jobs**", async (route) => {
         const url = new URL(route.request().url());
-        if (route.request().method() === "POST" && url.pathname.endsWith("/jobs")) return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ success: true, data: { ...creativeJobFixture(91, "QUEUED"), capability: "text_generation" } }) });
-        if (url.pathname.endsWith("/jobs/job-91")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { ...creativeJobFixture(91, "SUCCEEDED"), capability: "text_generation", result_asset_ids: ["refined-text"] } }) });
+        if (route.request().method() === "POST" && url.pathname.endsWith("/jobs"))
+            return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ success: true, data: { ...creativeJobFixture(91, "QUEUED"), capability: "text_generation" } }) });
+        if (url.pathname.endsWith("/jobs/job-91"))
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { ...creativeJobFixture(91, "SUCCEEDED"), capability: "text_generation", result_asset_ids: ["refined-text"] } }) });
         return route.fallback();
     });
-    await page.route("**/api/creative/assets/refined-text", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { asset_id: "refined-text", user_id: 1001, type: "TEXT", content: "精修后的电影感山谷", favorite: false, status: "READY", created_at: 1785700000, updated_at: 1785700000 } }) }));
+    await page.route("**/api/creative/assets/refined-text", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ success: true, data: { asset_id: "refined-text", user_id: 1001, type: "TEXT", content: "精修后的电影感山谷", favorite: false, status: "READY", created_at: 1785700000, updated_at: 1785700000 } }),
+        }),
+    );
 
     await page.goto("/creative/prompts");
     await page.getByRole("heading", { name: "带来源的电影提示词" }).click();
@@ -317,19 +444,40 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
     await page.route("**/api/creative/canvases**", async (route) => {
         const url = new URL(route.request().url());
         if (route.request().method() === "GET" && url.pathname.endsWith("/canvases")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [], total: 0, page: 1, page_size: 100 } }) });
-        if (route.request().method() === "GET" && url.pathname.endsWith("/revisions")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: [
-            { revision_id: "revision-2", project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 2, schema_version: 2, created_at: 1785700001 },
-            { revision_id: "revision-1", project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 1, schema_version: 2, created_at: 1785700000 },
-        ] }) });
+        if (route.request().method() === "GET" && url.pathname.endsWith("/revisions"))
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    success: true,
+                    data: [
+                        { revision_id: "revision-2", project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 2, schema_version: 2, created_at: 1785700001 },
+                        { revision_id: "revision-1", project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 1, schema_version: 2, created_at: 1785700000 },
+                    ],
+                }),
+            });
         if (route.request().method() === "POST" && url.pathname.endsWith("/revisions/revision-1/restore")) {
             restores.push(route.request().postDataJSON() as Record<string, unknown>);
-            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 3, schema_version: 2, created_at: 1785700000, updated_at: 1785700002 } }) });
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ success: true, data: { project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 3, schema_version: 2, created_at: 1785700000, updated_at: 1785700002 } }),
+            });
         }
-        if (route.request().method() === "POST" && url.pathname.endsWith("/canvases")) return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ success: true, data: { project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 1, schema_version: 2, created_at: 1785700000, updated_at: 1785700000 } }) });
+        if (route.request().method() === "POST" && url.pathname.endsWith("/canvases"))
+            return route.fulfill({
+                status: 201,
+                contentType: "application/json",
+                body: JSON.stringify({ success: true, data: { project_id: "canvas-1", user_id: 1001, title: "未命名画布", document: emptyDocument, version: 1, schema_version: 2, created_at: 1785700000, updated_at: 1785700000 } }),
+            });
         if (route.request().method() === "PUT" && url.pathname.endsWith("/canvases/canvas-1")) {
             const request = route.request().postDataJSON() as Record<string, unknown>;
             snapshots.push(request);
-            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { project_id: "canvas-1", user_id: 1001, title: request.title, document: request.document, version: 2, schema_version: 2, created_at: 1785700000, updated_at: 1785700001 } }) });
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ success: true, data: { project_id: "canvas-1", user_id: 1001, title: request.title, document: request.document, version: 2, schema_version: 2, created_at: 1785700000, updated_at: 1785700001 } }),
+            });
         }
         return route.fallback();
     });
@@ -344,9 +492,61 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
     await clickVisibleCanvasMenuItem(page, "版本历史");
     const versions = page.getByRole("dialog", { name: "版本历史" });
     await versions.getByRole("button", { name: "恢复此版本" }).last().click();
-    await page.getByRole("dialog", { name: "恢复版本 v1？" }).getByRole("button", { name: /恢\s*复/ }).click();
+    await page
+        .getByRole("dialog", { name: "恢复版本 v1？" })
+        .getByRole("button", { name: /恢\s*复/ })
+        .click();
     await expect.poll(() => restores.length).toBe(1);
     expect(restores[0]).toMatchObject({ expected_version: 2 });
+});
+
+test("mobile canvas supports lightweight editing and starts a configured task", async ({ page }) => {
+    test.setTimeout(90_000);
+    await prepareCreativePage(page, viewports[0]);
+    const createdJobs: Array<Record<string, unknown>> = [];
+    const emptyDocument = { nodes: [], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } };
+    await page.route("**/api/creative/canvases**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (route.request().method() === "GET" && path.endsWith("/canvases")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [], total: 0, page: 1, page_size: 100 } }) });
+        if (route.request().method() === "POST")
+            return route.fulfill({
+                status: 201,
+                contentType: "application/json",
+                body: JSON.stringify({ success: true, data: { project_id: "mobile-canvas", user_id: 1001, title: "移动画布", document: emptyDocument, version: 1, schema_version: 2, created_at: 1785700000, updated_at: 1785700000 } }),
+            });
+        if (route.request().method() === "PUT") {
+            const request = route.request().postDataJSON() as Record<string, unknown>;
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ success: true, data: { project_id: "mobile-canvas", user_id: 1001, title: request.title, document: request.document, version: 2, schema_version: 2, created_at: 1785700000, updated_at: 1785700001 } }),
+            });
+        }
+        return route.fallback();
+    });
+    await page.route("**/api/creative/jobs", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        createdJobs.push(route.request().postDataJSON() as Record<string, unknown>);
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: creativeJobFixture(77, "QUEUED") }) });
+    });
+
+    await page.goto("/creative/canvas");
+    await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
+    await expect(page).toHaveURL(/\/creative\/canvas\/mobile-canvas$/);
+    await expect(page.getByRole("button", { name: "展开面板" })).toBeVisible();
+    await expectNoPageOverflow(page);
+
+    await page.getByRole("button", { name: "文本" }).click();
+    const textNode = page.locator('[data-node-id^="text-"]').last();
+    await expect(textNode).toBeVisible();
+    await textNode.dblclick();
+    await textNode.locator("textarea").fill("移动端轻量编辑提示词");
+    await page.getByRole("button", { name: "生成配置" }).click();
+    const composer = page.locator('[contenteditable="true"]').last();
+    await composer.fill("移动端已配置生图任务");
+    await page.getByRole("button", { name: "开始生成" }).click();
+    await expect.poll(() => createdJobs.length).toBeGreaterThan(0);
+    expect(createdJobs.every((job) => job.capability === "image_generation" && job.prompt === "移动端已配置生图任务")).toBe(true);
 });
 
 test("missing models and tokens point to FYJIT account actions", async ({ page }) => {
@@ -443,11 +643,48 @@ function creativeFixture(path: string, requestBody?: { capability?: string; para
         };
     }
     if (path === "/capabilities") return { version: "visual-fixture-v1", capabilities: { image_generation: true, video_generation: true }, model_counts: { image_generation: 1, video_generation: 1 } };
-    if (path === "/models") return [
-        { id: "fyjit-visual-text", name: "FYJIT Visual Text", groups: ["default"], capabilities: ["text_generation"], recommended_for: ["text_generation"], capability_profiles: { text_generation: { verified: true, input_modes: ["text"], supported_parameters: ["temperature"], max_reference_images: 0, max_reference_videos: 0, max_reference_audio: 0, risk_notices: [] } }, supported_endpoint_types: ["openai"] },
-        { id: "fyjit-visual-image", name: "FYJIT Visual Image", groups: ["default"], capabilities: ["image_generation"], recommended_for: ["image_generation"], capability_profiles: { image_generation: { verified: true, input_modes: ["text_to_image", "image_edit"], supported_parameters: ["count", "size", "quality"], max_reference_images: 1, max_reference_videos: 0, max_reference_audio: 0, risk_notices: [] } }, supported_endpoint_types: ["openai"] },
-        { id: "fyjit-visual-video", name: "FYJIT Visual Video", groups: ["default"], capabilities: ["video_generation"], recommended_for: ["video_generation"], capability_profiles: { video_generation: { verified: true, input_modes: ["text_to_video", "image_to_video"], supported_parameters: ["duration", "size", "resolution"], max_reference_images: 1, max_reference_videos: 0, max_reference_audio: 0, risk_notices: ["当前 Relay 版本只发送首张参考图。"] } }, supported_endpoint_types: ["openai"] },
-    ];
+    if (path === "/models")
+        return [
+            {
+                id: "fyjit-visual-text",
+                name: "FYJIT Visual Text",
+                groups: ["default"],
+                capabilities: ["text_generation"],
+                recommended_for: ["text_generation"],
+                capability_profiles: { text_generation: { verified: true, input_modes: ["text"], supported_parameters: ["temperature"], max_reference_images: 0, max_reference_videos: 0, max_reference_audio: 0, risk_notices: [] } },
+                supported_endpoint_types: ["openai"],
+            },
+            {
+                id: "fyjit-visual-image",
+                name: "FYJIT Visual Image",
+                groups: ["default"],
+                capabilities: ["image_generation"],
+                recommended_for: ["image_generation"],
+                capability_profiles: {
+                    image_generation: { verified: true, input_modes: ["text_to_image", "image_edit"], supported_parameters: ["count", "size", "quality"], max_reference_images: 1, max_reference_videos: 0, max_reference_audio: 0, risk_notices: [] },
+                },
+                supported_endpoint_types: ["openai"],
+            },
+            {
+                id: "fyjit-visual-video",
+                name: "FYJIT Visual Video",
+                groups: ["default"],
+                capabilities: ["video_generation"],
+                recommended_for: ["video_generation"],
+                capability_profiles: {
+                    video_generation: {
+                        verified: true,
+                        input_modes: ["text_to_video", "image_to_video"],
+                        supported_parameters: ["duration", "size", "resolution"],
+                        max_reference_images: 1,
+                        max_reference_videos: 0,
+                        max_reference_audio: 0,
+                        risk_notices: ["当前 Relay 版本只发送首张参考图。"],
+                    },
+                },
+                supported_endpoint_types: ["openai"],
+            },
+        ];
     if (path === "/tokens") return [{ id: 7, name: "自动创作 Token", group: "default", unlimited_quota: false, remain_quota: 100000, expired_time: -1, model_limits_enabled: false }];
     if (path === "/estimates") {
         const video = requestBody?.capability === "video_generation";
@@ -474,8 +711,36 @@ function creativeFixture(path: string, requestBody?: { capability?: string; para
     if (path.startsWith("/assets")) {
         return {
             items: [
-                { asset_id: "visual-image", user_id: 1001, type: "IMAGE", title: "晨雾中的山谷", status: "READY", source_module: "image-workbench", preview_path: imageFixture("山谷", "#dbeafe", "#0f766e"), thumbnail_path: imageFixture("山谷", "#dbeafe", "#0f766e"), mime_type: "image/svg+xml", width: 1024, height: 768, size_bytes: 16384, created_at: 1785700000, updated_at: 1785700000 },
-                { asset_id: "visual-video", user_id: 1001, type: "VIDEO", title: "城市光影预览", status: "READY", source_module: "video-workbench", preview_path: "/api/creative/assets/visual-video/content", thumbnail_path: imageFixture("视频", "#ede9fe", "#7c3aed"), mime_type: "video/mp4", size_bytes: 5242880, created_at: 1785700100, updated_at: 1785700100 },
+                {
+                    asset_id: "visual-image",
+                    user_id: 1001,
+                    type: "IMAGE",
+                    title: "晨雾中的山谷",
+                    status: "READY",
+                    source_module: "image-workbench",
+                    preview_path: imageFixture("山谷", "#dbeafe", "#0f766e"),
+                    thumbnail_path: imageFixture("山谷", "#dbeafe", "#0f766e"),
+                    mime_type: "image/svg+xml",
+                    width: 1024,
+                    height: 768,
+                    size_bytes: 16384,
+                    created_at: 1785700000,
+                    updated_at: 1785700000,
+                },
+                {
+                    asset_id: "visual-video",
+                    user_id: 1001,
+                    type: "VIDEO",
+                    title: "城市光影预览",
+                    status: "READY",
+                    source_module: "video-workbench",
+                    preview_path: "/api/creative/assets/visual-video/content",
+                    thumbnail_path: imageFixture("视频", "#ede9fe", "#7c3aed"),
+                    mime_type: "video/mp4",
+                    size_bytes: 5242880,
+                    created_at: 1785700100,
+                    updated_at: 1785700100,
+                },
             ],
             total: 2,
             page: 1,

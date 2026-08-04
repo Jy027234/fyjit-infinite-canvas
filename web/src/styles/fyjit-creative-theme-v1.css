@@ -1,0 +1,114 @@
+/*
+ * FYJIT Creative Theme v1.0.0
+ *
+ * Public design contract extracted from FYJIT web/default/src/styles/theme.css.
+ * This file is distributed with the derivative application under AGPL-3.0 and
+ * deliberately contains no private package, build-time service, or runtime URL.
+ */
+
+:root {
+    --fyjit-theme-version: "1.0.0";
+
+    /* Typography */
+    --fyjit-font-sans: "Public Sans Variable", "Public Sans", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Arial, Helvetica, sans-serif;
+    --fyjit-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+    /* Color */
+    --fyjit-color-background: oklch(0.986 0.004 265);
+    --fyjit-color-foreground: oklch(0.235 0.025 270);
+    --fyjit-color-card: oklch(1 0 0);
+    --fyjit-color-card-foreground: oklch(0.235 0.025 270);
+    --fyjit-color-popover: oklch(1 0 0);
+    --fyjit-color-popover-foreground: oklch(0.235 0.025 270);
+    --fyjit-color-primary: oklch(0.58 0.21 295);
+    --fyjit-color-primary-foreground: oklch(1 0 0);
+    --fyjit-color-secondary: oklch(0.95 0 0);
+    --fyjit-color-secondary-foreground: oklch(0.42 0.16 250);
+    --fyjit-color-muted: oklch(0.97 0 0);
+    --fyjit-color-muted-foreground: oklch(0.49 0 0);
+    --fyjit-color-accent: color-mix(in oklch, var(--fyjit-color-primary) 12%, var(--fyjit-color-background));
+    --fyjit-color-accent-foreground: oklch(0.145 0 0);
+    --fyjit-color-destructive: oklch(0.577 0.245 27.325);
+    --fyjit-color-success: oklch(0.596 0.145 163.225);
+    --fyjit-color-warning: oklch(0.681 0.162 75.834);
+    --fyjit-color-info: oklch(0.588 0.158 241.966);
+    --fyjit-color-border: oklch(0.89 0.015 270);
+    --fyjit-color-input: oklch(0.85 0.018 270);
+    --fyjit-color-ring: oklch(0.59 0.21 295);
+    --fyjit-color-sidebar: color-mix(in oklch, var(--fyjit-color-foreground) 0.5%, var(--fyjit-color-background));
+    --fyjit-color-sidebar-foreground: oklch(0.145 0 0);
+    --fyjit-color-sidebar-accent: color-mix(in oklch, var(--fyjit-color-primary) 12%, var(--fyjit-color-background));
+
+    /* Radius */
+    --fyjit-radius-base: 0.625rem;
+    --fyjit-radius-sm: calc(var(--fyjit-radius-base) * 0.6);
+    --fyjit-radius-md: calc(var(--fyjit-radius-base) * 0.8);
+    --fyjit-radius-lg: var(--fyjit-radius-base);
+    --fyjit-radius-xl: calc(var(--fyjit-radius-base) * 1.4);
+    --fyjit-radius-2xl: calc(var(--fyjit-radius-base) * 1.8);
+
+    /* Spacing */
+    --fyjit-space-1: 0.25rem;
+    --fyjit-space-2: 0.5rem;
+    --fyjit-space-3: 0.75rem;
+    --fyjit-space-4: 1rem;
+    --fyjit-space-5: 1.25rem;
+    --fyjit-space-6: 1.5rem;
+    --fyjit-space-8: 2rem;
+    --fyjit-space-12: 3rem;
+    --fyjit-header-height: 3.5rem;
+
+    /* Elevation and stacking */
+    --fyjit-shadow-xs: 0 1px 2px rgb(15 23 42 / 0.05);
+    --fyjit-shadow-sm: 0 1px 3px rgb(15 23 42 / 0.08), 0 1px 2px rgb(15 23 42 / 0.04);
+    --fyjit-shadow-md: 0 12px 32px rgb(15 23 42 / 0.1);
+    --fyjit-shadow-lg: 0 24px 64px rgb(15 23 42 / 0.16);
+    --fyjit-z-header: 20;
+    --fyjit-z-sticky: 30;
+    --fyjit-z-overlay: 60;
+    --fyjit-z-modal: 1000;
+
+    /* Motion */
+    --fyjit-motion-fast: 120ms;
+    --fyjit-motion-normal: 200ms;
+    --fyjit-motion-slow: 320ms;
+    --fyjit-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --fyjit-ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
+
+    /* Published breakpoints. CSS custom properties cannot be used directly in
+       media conditions; these values are the cross-repository design contract. */
+    --fyjit-breakpoint-sm: 640px;
+    --fyjit-breakpoint-md: 768px;
+    --fyjit-breakpoint-lg: 1024px;
+    --fyjit-breakpoint-xl: 1280px;
+    --fyjit-breakpoint-2xl: 1536px;
+}
+
+.dark {
+    --fyjit-color-background: oklch(0.145 0.012 275);
+    --fyjit-color-foreground: oklch(0.965 0.012 275);
+    --fyjit-color-card: oklch(0.185 0.016 275);
+    --fyjit-color-card-foreground: oklch(0.965 0.012 275);
+    --fyjit-color-popover: oklch(0.215 0.018 275);
+    --fyjit-color-popover-foreground: oklch(0.965 0.012 275);
+    --fyjit-color-primary: oklch(0.65 0.23 295);
+    --fyjit-color-primary-foreground: oklch(1 0 0);
+    --fyjit-color-secondary: oklch(0.335 0 0);
+    --fyjit-color-secondary-foreground: oklch(0.9 0.05 250);
+    --fyjit-color-muted: oklch(0.305 0 0);
+    --fyjit-color-muted-foreground: oklch(0.78 0 0);
+    --fyjit-color-accent: color-mix(in oklch, var(--fyjit-color-primary) 20%, var(--fyjit-color-background));
+    --fyjit-color-accent-foreground: oklch(0.985 0 0);
+    --fyjit-color-destructive: oklch(0.704 0.191 22.216);
+    --fyjit-color-success: oklch(0.696 0.17 162.48);
+    --fyjit-color-warning: oklch(0.769 0.188 70.08);
+    --fyjit-color-info: oklch(0.613 0.14 239.919);
+    --fyjit-color-border: oklch(1 0 0 / 11%);
+    --fyjit-color-input: oklch(1 0 0 / 15%);
+    --fyjit-color-ring: oklch(0.7 0.21 295);
+    --fyjit-color-sidebar: oklch(0.16 0.014 275);
+    --fyjit-color-sidebar-foreground: oklch(0.95 0.012 275);
+    --fyjit-color-sidebar-accent: color-mix(in oklch, var(--fyjit-color-primary) 15%, var(--fyjit-color-background));
+    --fyjit-shadow-md: 0 14px 36px rgb(0 0 0 / 0.32);
+    --fyjit-shadow-lg: 0 28px 72px rgb(0 0 0 / 0.46);
+}

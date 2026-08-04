@@ -3,8 +3,8 @@ import { theme as antdTheme } from "antd";
 
 const neutral = {
     light: {
-        primary: "#171717",
-        primaryHover: "#000000",
+        primary: "#7c3aed",
+        primaryHover: "#6d28d9",
         primaryText: "#ffffff",
         menuBg: "#f5f5f5",
         menuText: "#171717",
@@ -15,8 +15,8 @@ const neutral = {
         tableSelectedHoverBg: "rgba(17, 17, 17, 0.08)",
     },
     dark: {
-        primary: "#fafafa",
-        primaryHover: "#ffffff",
+        primary: "#a78bfa",
+        primaryHover: "#c4b5fd",
         primaryText: "#171717",
         menuBg: "#262626",
         menuText: "#fafafa",

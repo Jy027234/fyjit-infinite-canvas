@@ -27,6 +27,8 @@ export type CanvasImageGenerationType = "generation" | "edit";
 
 export type CanvasNodeMetadata = {
     content?: string;
+    thumbnailUrl?: string;
+    posterUrl?: string;
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
@@ -95,6 +97,7 @@ export type CanvasAssistantReference = {
 export type CanvasAssistantImage = {
     id: string;
     dataUrl: string;
+    thumbnailUrl?: string;
     storageKey?: string;
     assetId?: string;
     prompt: string;

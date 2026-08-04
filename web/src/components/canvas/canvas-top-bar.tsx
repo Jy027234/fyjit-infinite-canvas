@@ -82,7 +82,7 @@ export function CanvasTopBar({
                             type="button"
                             onClick={toggleSidePanel}
                             aria-label={sidePanelOpen ? "收起面板" : "展开面板"}
-                            className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10"
+                            className="grid size-11 place-items-center rounded-full transition hover:bg-black/5 sm:size-7 dark:hover:bg-white/10"
                             style={{ color: theme.node.text }}
                         >
                             {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
@@ -109,12 +109,12 @@ export function CanvasTopBar({
                             ],
                         }}
                     >
-                        <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
+                        <button type="button" className="grid size-11 place-items-center rounded-full transition hover:bg-black/5 sm:size-7 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
                             <Menu className="size-4" />
                         </button>
                     </Dropdown>
 
-                    <div ref={titleRef} className="flex min-w-0 items-center gap-2">
+                    <div ref={titleRef} className="hidden min-w-0 items-center gap-2 min-[430px]:flex">
                         {isTitleEditing ? (
                             <input
                                 autoFocus
@@ -139,11 +139,15 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
-                    <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
+                    <div className="hidden md:block">
+                        <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
+                    </div>
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
-                    <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
+                    <div className="hidden sm:block">
+                        <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
+                    </div>
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button
                         type="text"
@@ -152,7 +156,7 @@ export function CanvasTopBar({
                         icon={<Bot className="size-4" />}
                         onClick={onToggleAgent}
                     >
-                        Agent
+                        <span className="hidden sm:inline">Agent</span>
                     </Button>
                 </div>
             </div>

@@ -17,7 +17,9 @@ function initialWidth() {
 
 function initialOpen() {
     if (typeof window === "undefined") return true;
-    return localStorage.getItem(OPEN_KEY) !== "0";
+    const stored = localStorage.getItem(OPEN_KEY);
+    if (stored) return stored !== "0";
+    return !window.matchMedia("(max-width: 639px)").matches;
 }
 
 type CanvasSidePanelStore = {

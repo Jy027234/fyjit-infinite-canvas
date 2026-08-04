@@ -8,14 +8,7 @@ import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
-import {
-    deleteCreativeAsset,
-    fetchCreativeAssets,
-    fetchCreativePrompts,
-    uploadCreativeAsset,
-    type CreativeAsset,
-    type CreativePrompt,
-} from "@/services/api/creative";
+import { deleteCreativeAsset, fetchCreativeAssets, fetchCreativePrompts, uploadCreativeAsset, type CreativeAsset, type CreativePrompt } from "@/services/api/creative";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -85,7 +78,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
 
     return (
         <motion.div
-            className="relative z-[60] flex h-full shrink-0"
+            className="absolute inset-y-0 left-0 z-[60] flex h-full max-w-[calc(100vw-3rem)] shrink-0 sm:relative sm:inset-auto"
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
@@ -96,7 +89,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
                 initial={{ x: -48 }}
                 animate={{ x: panelClosing ? -28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
-                style={{ width, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                style={{ width: `min(${width}px, calc(100vw - 3rem))`, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                 data-canvas-no-zoom
             >
                 <div className="flex items-center gap-5 px-4 pt-3.5">
@@ -113,7 +106,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
                         <CanvasPromptsTab onInsert={onInsertAsset} theme={theme} />
                     )}
                 </div>
-                <button type="button" className="absolute inset-y-0 right-0 z-40 w-4 translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label="调整左侧面板宽度" />
+                <button type="button" className="absolute inset-y-0 right-0 z-40 hidden w-4 translate-x-1/2 cursor-col-resize sm:block" onPointerDown={startResize} aria-label="调整左侧面板宽度" />
             </motion.aside>
         </motion.div>
     );
@@ -234,7 +227,13 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
                                     </button>
                                     {selectMode || !isImage ? null : (
                                         <div className="flex shrink-0 flex-col items-center gap-0.5 pr-1.5">
-                                            <button type="button" onClick={() => onPreviewNode(node.id)} className="grid size-7 place-items-center rounded-md opacity-55 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10" aria-label="放大预览" title="放大预览">
+                                            <button
+                                                type="button"
+                                                onClick={() => onPreviewNode(node.id)}
+                                                className="grid size-7 place-items-center rounded-md opacity-55 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+                                                aria-label="放大预览"
+                                                title="放大预览"
+                                            >
                                                 <Eye className="size-3.5" />
                                             </button>
                                         </div>
@@ -295,8 +294,8 @@ function assetContentUrl(assetId: string) {
 function buildInsertPayload(asset: CreativeAsset): InsertAssetPayload {
     const title = asset.title || "未命名素材";
     if (asset.type === "TEXT") return { kind: "text", content: asset.content || "", title, assetId: asset.asset_id };
-    if (asset.type === "VIDEO") return { kind: "video", url: asset.preview_path || assetContentUrl(asset.asset_id), title, width: asset.width, height: asset.height, assetId: asset.asset_id };
-    return { kind: "image", dataUrl: asset.preview_path || assetContentUrl(asset.asset_id), title, assetId: asset.asset_id };
+    if (asset.type === "VIDEO") return { kind: "video", url: asset.preview_path || assetContentUrl(asset.asset_id), posterUrl: asset.thumbnail_path, title, width: asset.width, height: asset.height, assetId: asset.asset_id };
+    return { kind: "image", dataUrl: asset.preview_path || assetContentUrl(asset.asset_id), thumbnailUrl: asset.thumbnail_path, title, assetId: asset.asset_id };
 }
 
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
@@ -337,8 +336,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
             if (added) {
                 await query.refetch();
                 message.success(`已添加 ${added} 个资产`);
-            }
-            else message.warning("仅支持图片或视频文件");
+            } else message.warning("仅支持图片或视频文件");
         } catch (error) {
             console.error(error);
             message.error("添加失败，请重试");
@@ -378,7 +376,11 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                 </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {query.isLoading ? <div className="grid min-h-48 place-items-center"><Spin /></div> : groups.length ? (
+                {query.isLoading ? (
+                    <div className="grid min-h-48 place-items-center">
+                        <Spin />
+                    </div>
+                ) : groups.length ? (
                     <div className="space-y-1">
                         {groups.map((group) => {
                             const isCollapsed = collapsed[group.kind];
@@ -457,9 +459,13 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: CreativeAsset;
 function AssetCover({ asset }: { asset: CreativeAsset }) {
     if (asset.type === "TEXT") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.content}</div>;
     if (asset.type === "VIDEO") {
-        return asset.thumbnail_path ? <img src={asset.thumbnail_path} alt="" loading="lazy" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <video src={`${asset.preview_path || assetContentUrl(asset.asset_id)}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+        return asset.thumbnail_path ? (
+            <img src={asset.thumbnail_path} alt="" loading="lazy" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+        ) : (
+            <video src={`${asset.preview_path || assetContentUrl(asset.asset_id)}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+        );
     }
-    return <img src={asset.thumbnail_path || asset.preview_path || assetContentUrl(asset.asset_id)} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+    return <img src={asset.thumbnail_path || asset.preview_path || assetContentUrl(asset.asset_id)} alt="" loading="lazy" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,18 +495,40 @@ const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { o
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索提示词" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {query.isLoading ? <div className="grid min-h-48 place-items-center"><Spin /></div> : groups.length ? <div className="space-y-1">{groups.map(([category, items]) => {
-                    const open = keyword.trim() !== "" || !!expanded[category];
-                    return <div key={category}>
-                        <button type="button" onClick={() => setExpanded((prev) => ({ ...prev, [category]: !prev[category] }))} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100">
-                            <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-                            <BookOpen className="size-3.5" />
-                            <span className="min-w-0 flex-1 truncate">{category}</span>
-                            <span className="opacity-50">{items.length}</span>
-                        </button>
-                        {open ? <div className="space-y-1.5 px-1 pb-2 pt-1">{items.map((item) => <PromptRow key={item.prompt_id} item={item} theme={theme} onInsert={() => onInsert({ kind: "text", content: item.content, title: item.title, assetId: undefined })} />)}</div> : null}
-                    </div>;
-                })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词" className="pt-12" />}
+                {query.isLoading ? (
+                    <div className="grid min-h-48 place-items-center">
+                        <Spin />
+                    </div>
+                ) : groups.length ? (
+                    <div className="space-y-1">
+                        {groups.map(([category, items]) => {
+                            const open = keyword.trim() !== "" || !!expanded[category];
+                            return (
+                                <div key={category}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setExpanded((prev) => ({ ...prev, [category]: !prev[category] }))}
+                                        className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100"
+                                    >
+                                        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+                                        <BookOpen className="size-3.5" />
+                                        <span className="min-w-0 flex-1 truncate">{category}</span>
+                                        <span className="opacity-50">{items.length}</span>
+                                    </button>
+                                    {open ? (
+                                        <div className="space-y-1.5 px-1 pb-2 pt-1">
+                                            {items.map((item) => (
+                                                <PromptRow key={item.prompt_id} item={item} theme={theme} onInsert={() => onInsert({ kind: "text", content: item.content, title: item.title, assetId: undefined })} />
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词" className="pt-12" />
+                )}
             </div>
         </div>
     );
