@@ -55,6 +55,7 @@ jobs:
       - name: Responsive visual regression
         run: >-
           docker run --rm --ipc=host
+          -e CI=true
           -v "${{ github.workspace }}:/repo"
           -w /repo/web
           mcr.microsoft.com/playwright:v1.62.1-noble
