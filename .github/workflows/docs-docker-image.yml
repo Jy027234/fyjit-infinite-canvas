@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}-docs
+  IMAGE_NAME: ghcr.io/jy027234/fyjit-infinite-canvas-docs
 
 jobs:
   meta:
