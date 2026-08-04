@@ -28,6 +28,18 @@ The registry transport project [yukkcat/image-prompts](https://github.com/yukkca
 
 Custom prompt sources default to link-only. An operator must provide a license identifier, license URL, and attribution before enabling full-content synchronization. Imported prompt assets retain those fields in metadata.
 
+## Platform-native build helpers
+
+OS/architecture-specific optional packages are normalized to their parent project so this file remains identical on Linux, Windows, and macOS. These helpers are used during development/build and are not bundled into the browser application.
+
+| Package family | License | Repository |
+| --- | --- | --- |
+| esbuild native binary | MIT | [evanw/esbuild](https://github.com/evanw/esbuild) |
+| Oxlint native binary | MIT | [oxc-project/oxc](https://github.com/oxc-project/oxc) |
+| Rollup native binary | MIT | [rollup/rollup](https://github.com/rollup/rollup) |
+| Tailwind Oxide native binary | MIT | [tailwindlabs/tailwindcss](https://github.com/tailwindlabs/tailwindcss) |
+| Lightning CSS native binary | MPL-2.0 | [parcel-bundler/lightningcss](https://github.com/parcel-bundler/lightningcss) |
+
 ## JavaScript packages
 
 | Package | Version | Declared license | Repository |
@@ -112,8 +124,6 @@ Custom prompt sources default to link-only. An operator must provide a license i
 | @emotion/unitless | 0.7.5 | MIT | [source](https://github.com/emotion-js/emotion/tree/master/packages/unitless) |
 | @emotion/utils | 1.4.2 | MIT | [source](https://github.com/emotion-js/emotion/tree/main/packages/utils) |
 | @emotion/weak-memoize | 0.4.0 | MIT | [source](https://github.com/emotion-js/emotion/tree/main/packages/weak-memoize) |
-| @esbuild/linux-x64 | 0.28.1 | MIT | [source](https://github.com/evanw/esbuild) |
-| @esbuild/win32-x64 | 0.28.1 | MIT | [source](https://github.com/evanw/esbuild) |
 | @floating-ui/core | 1.7.5 | MIT | [source](https://github.com/floating-ui/floating-ui) |
 | @floating-ui/dom | 1.7.6 | MIT | [source](https://github.com/floating-ui/floating-ui) |
 | @floating-ui/react-dom | 2.1.8 | MIT | [source](https://github.com/floating-ui/floating-ui) |
@@ -150,9 +160,6 @@ Custom prompt sources default to link-only. An operator must provide a license i
 | @open-draft/deferred-promise | 3.0.0 | MIT | [source](https://github.com/open-draft/deferred-promise) |
 | @open-draft/logger | 0.3.0 | MIT | [source](https://github.com/open-draft/logger) |
 | @open-draft/until | 2.1.0 | MIT | [source](open-draft/until) |
-| @oxlint/linux-x64-gnu | 1.34.0 | MIT | [source](https://github.com/oxc-project/oxc) |
-| @oxlint/linux-x64-musl | 1.34.0 | MIT | [source](https://github.com/oxc-project/oxc) |
-| @oxlint/win32-x64 | 1.34.0 | MIT | [source](https://github.com/oxc-project/oxc) |
 | @playwright/test | 1.62.1 | Apache-2.0 | [source](https://github.com/microsoft/playwright) |
 | @radix-ui/number | 1.1.1 | MIT | [source](https://github.com/radix-ui/primitives) |
 | @radix-ui/primitive | 1.1.3 | MIT | [source](https://github.com/radix-ui/primitives) |
@@ -259,17 +266,10 @@ Custom prompt sources default to link-only. An operator must provide a license i
 | @rc-component/util | 1.11.0 | MIT | [source](https://github.com/react-component/util) |
 | @rc-component/virtual-list | 1.0.2 | MIT | [source](https://github.com/react-component/virtual-list) |
 | @rolldown/pluginutils | 1.0.0-rc.3 | MIT | [source](https://github.com/rolldown/rolldown) |
-| @rollup/rollup-linux-x64-gnu | 4.62.2 | MIT | [source](https://github.com/rollup/rollup) |
-| @rollup/rollup-linux-x64-musl | 4.62.2 | MIT | [source](https://github.com/rollup/rollup) |
-| @rollup/rollup-win32-x64-gnu | 4.62.2 | MIT | [source](https://github.com/rollup/rollup) |
-| @rollup/rollup-win32-x64-msvc | 4.62.2 | MIT | [source](https://github.com/rollup/rollup) |
 | @sec-ant/readable-stream | 0.4.1 | MIT | [source](https://github.com/Sec-ant/readable-stream) |
 | @sindresorhus/merge-streams | 4.0.0 | MIT | [source](sindresorhus/merge-streams) |
 | @tailwindcss/node | 4.2.4 | MIT | [source](https://github.com/tailwindlabs/tailwindcss) |
 | @tailwindcss/oxide | 4.2.4 | MIT | [source](https://github.com/tailwindlabs/tailwindcss) |
-| @tailwindcss/oxide-linux-x64-gnu | 4.2.4 | MIT | [source](https://github.com/tailwindlabs/tailwindcss) |
-| @tailwindcss/oxide-linux-x64-musl | 4.2.4 | MIT | [source](https://github.com/tailwindlabs/tailwindcss) |
-| @tailwindcss/oxide-win32-x64-msvc | 4.2.4 | MIT | [source](https://github.com/tailwindlabs/tailwindcss) |
 | @tailwindcss/postcss | 4.2.4 | MIT | [source](https://github.com/tailwindlabs/tailwindcss) |
 | @tanstack/query-core | 5.100.9 | MIT | [source](https://github.com/TanStack/query) |
 | @tanstack/react-query | 5.100.9 | MIT | [source](https://github.com/TanStack/query) |
@@ -630,9 +630,6 @@ Custom prompt sources default to link-only. An operator must provide a license i
 | layout-base | 2.0.1 | MIT | [source](https://github.com/iVis-at-Bilkent/layout-base) |
 | lie | 3.1.1 | MIT | [source](https://github.com/calvinmetcalf/lie) |
 | lightningcss | 1.32.0 | MPL-2.0 | [source](https://github.com/parcel-bundler/lightningcss) |
-| lightningcss-linux-x64-gnu | 1.32.0 | MPL-2.0 | [source](https://github.com/parcel-bundler/lightningcss) |
-| lightningcss-linux-x64-musl | 1.32.0 | MPL-2.0 | [source](https://github.com/parcel-bundler/lightningcss) |
-| lightningcss-win32-x64-msvc | 1.32.0 | MPL-2.0 | [source](https://github.com/parcel-bundler/lightningcss) |
 | lines-and-columns | 1.2.4 | MIT | [source](https://github.com/eventualbuddha/lines-and-columns) |
 | localforage | 1.10.0 | Apache-2.0 | [source](https://github.com/localForage/localForage) |
 | lodash-es | 4.18.1 | MIT | [source](lodash/lodash) |
