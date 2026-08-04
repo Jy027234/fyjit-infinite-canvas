@@ -7,7 +7,7 @@ import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
 import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import type { PromptSource } from "@/services/api/prompt-source-presets";
+import { canSyncPromptSource, isPromptSourceApproved, type PromptSource } from "@/services/api/prompt-source-presets";
 
 const STATUS_QUERY_KEY = ["prompt-source-statuses"];
 
@@ -96,6 +96,8 @@ export function ConfigPromptSources() {
             <div className="space-y-2">
                 {sources.map((source) => {
                     const status = statusQuery.data?.[source.id];
+                    const canSync = canSyncPromptSource(source);
+                    const approved = isPromptSourceApproved(source);
                     return (
                         <div key={source.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
                             <Switch size="small" checked={source.enabled} onChange={(checked) => { toggleSource(source.id, checked); void invalidatePrompts(); }} />
@@ -103,21 +105,23 @@ export function ConfigPromptSources() {
                                 <div className="flex min-w-0 items-center gap-2">
                                     <span className="truncate text-sm font-semibold">{source.name}</span>
                                     {source.builtIn ? <Tag className="m-0 shrink-0 text-[10px]">内置</Tag> : null}
+                                    {approved ? <Tag color="blue" className="m-0 shrink-0 text-[10px]">完整同步</Tag> : <Tag color="gold" className="m-0 shrink-0 text-[10px]">仅外链</Tag>}
                                 </div>
                                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
                                     <a className="max-w-full truncate hover:text-stone-800 hover:underline dark:hover:text-stone-200" href={source.homepage || source.url} target="_blank" rel="noreferrer">
                                         {source.homepage || source.url}
                                     </a>
-                                    <span className="tabular-nums">{status?.count ?? 0} 条</span>
-                                    {status?.lastError ? <Tag color="error" className="m-0 text-[10px]" title={status.lastError}>失败</Tag> : status?.lastSuccessAt ? <Tag color="success" className="m-0 text-[10px]">正常</Tag> : <Tag className="m-0 text-[10px]">未同步</Tag>}
-                                    <span>{status?.lastSuccessAt ? `上次成功 ${formatTime(status.lastSuccessAt)}` : "尚未拉取"}</span>
+                                    {source.licenseUrl ? <a className="hover:underline" href={source.licenseUrl} target="_blank" rel="noreferrer">{source.licenseId}</a> : <span>{source.licenseId || "许可证未核验"}</span>}
+                                    {approved ? <span className="tabular-nums">{status?.count ?? 0} 条</span> : null}
+                                    {approved ? (status?.lastError ? <Tag color="error" className="m-0 text-[10px]" title={status.lastError}>失败</Tag> : status?.lastSuccessAt ? <Tag color="success" className="m-0 text-[10px]">正常</Tag> : <Tag className="m-0 text-[10px]">未同步</Tag>) : null}
+                                    {approved ? <span>{status?.lastSuccessAt ? `上次成功 ${formatTime(status.lastSuccessAt)}` : "尚未拉取"}</span> : <span>不下载正文或预览</span>}
                                 </div>
                             </div>
                             <div className="ml-auto flex flex-wrap justify-end gap-2">
-                                <Button size="small" icon={<Eye className="size-3.5" />} onClick={() => setViewingId(source.id)}>
+                                <Button size="small" icon={<Eye className="size-3.5" />} disabled={!canSync} onClick={() => setViewingId(source.id)}>
                                     查看内容
                                 </Button>
-                                <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
+                                <Button size="small" icon={<RefreshCw className="size-3.5" />} disabled={!canSync} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
                                     立即拉取
                                 </Button>
                                 {!source.builtIn ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingSource(source)}>编辑来源</Button> : null}
@@ -140,7 +144,7 @@ export function ConfigPromptSources() {
                     </Button>
                     <span className="text-xs text-stone-500">{schedule.lastFetchedAt ? `上次拉取 ${formatTime(schedule.lastFetchedAt)}` : "尚未定时拉取"}</span>
                 </div>
-                <div className="mt-2 text-xs text-stone-400">开启周期后，页面打开期间会按周期自动拉取所有启用的来源。</div>
+                <div className="mt-2 text-xs text-stone-400">开启周期后，页面打开期间只会拉取已启用且授权审计通过的来源；仅外链来源不会下载或缓存内容。</div>
             </section>
 
             <PromptSourceEditorDrawer open={Boolean(editingSource)} source={editingSource} onSave={handleSave} onClose={() => setEditingSource(null)} />

@@ -90,7 +90,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 16倍数对齐
                             </span>
                             <span title="输入完成后自动向上补成 16 的倍数" onMouseDown={(event) => event.stopPropagation()}>
-                                <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
+                                <Switch aria-label="16 倍数对齐" size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
                             </span>
                         </div>
                     </div>
@@ -126,7 +126,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </div>
                     <span onMouseDown={(event) => event.stopPropagation()}>
-                        <Switch size="small" checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
+                        <Switch aria-label="透明背景" size="small" checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
                     </span>
                 </div>
                 <div className="space-y-2.5">
@@ -194,6 +194,7 @@ function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange 
             </span>
             <input
                 type="number"
+                aria-label={prefix === "W" ? "图像宽度" : "图像高度"}
                 min={1}
                 disabled={disabled}
                 className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -214,6 +215,7 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
         <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
                 type="number"
+                aria-label="生成张数"
                 min={1}
                 max={max}
                 className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"

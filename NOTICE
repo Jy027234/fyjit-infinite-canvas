@@ -10,6 +10,9 @@ License: GNU Affero General Public License v3.0
 The original copyright notices, Git history, and AGPL-3.0 license are retained.
 FYJIT-specific modifications are also distributed under AGPL-3.0.
 
+Third-party JavaScript packages, bundled assets, and audited prompt sources are
+listed in THIRD_PARTY_NOTICES.md.
+
 FYJIT names and logos are trademarks and are not granted under the software
 license except as required to identify the running service and corresponding
 source.

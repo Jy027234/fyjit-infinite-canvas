@@ -16,7 +16,9 @@
         "format:check": "prettier --check .",
         "contract:generate": "node scripts/generate-creative-contract.mjs",
         "contract:check": "node scripts/generate-creative-contract.mjs --check",
-        "boundary:check": "node scripts/check-fyjit-boundary.mjs"
+        "boundary:check": "node scripts/check-fyjit-boundary.mjs",
+        "licenses:generate": "node scripts/generate-third-party-notices.mjs",
+        "licenses:check": "node scripts/generate-third-party-notices.mjs --check"
     },
     "dependencies": {
         "@ant-design/icons": "^6.1.1",
@@ -50,6 +52,7 @@
         "zustand": "^5.0.12"
     },
     "devDependencies": {
+        "@axe-core/playwright": "4.12.1",
         "@playwright/test": "^1.62.1",
         "@tailwindcss/postcss": "^4",
         "@types/bun": "1.3.14",

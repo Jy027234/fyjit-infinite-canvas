@@ -104,7 +104,7 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
                                 {value}s
                             </OptionPill>
                         ))}
-                        <NumberInput value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                        <NumberInput label="视频时长" value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                     </div>
                 </SettingGroup> : null}
                 {supports("fps") ? <SettingGroup title="帧率" color={theme.node.muted}>
@@ -114,7 +114,7 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
                                 {value} FPS
                             </OptionPill>
                         ))}
-                        <NumberInput value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
+                        <NumberInput label="视频帧率" value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
                     </div>
                 </SettingGroup> : null}
                 {supports("generate_audio") || supports("watermark") || supports("camera_fixed") ? <SettingGroup title="输出与镜头" color={theme.node.muted}>
@@ -180,12 +180,12 @@ function SeedanceVideoSettingsPanel({ config, supportedParameters, onConfigChang
                             </OptionPill>
                         ))}
                     </div>
-                    <NumberInput value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    <NumberInput label="视频时长" value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                 </SettingGroup> : null}
                 {supports("fps") ? <SettingGroup title="帧率" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
                         {[24, 30, 60].map((value) => <OptionPill key={value} selected={fps === String(value)} theme={theme} onClick={() => onConfigChange("videoFps", String(value))}>{value} FPS</OptionPill>)}
-                        <NumberInput value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
+                        <NumberInput label="视频帧率" value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
                     </div>
                 </SettingGroup> : null}
                 {supports("generate_audio") || supports("watermark") || supports("camera_fixed") ? <SettingGroup title="输出与镜头" color={theme.node.muted}>
@@ -252,7 +252,7 @@ function SettingGroup({ title, color, children }: { title: string; color: string
 function ResolutionInput({ value, theme, onChange }: { value: string; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
         <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
-            <input type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+            <input aria-label="视频分辨率" type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
             <span className="grid w-7 place-items-center pr-1" style={{ color: theme.node.muted }}>
                 p
             </span>
@@ -266,13 +266,13 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
-            <input type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
+            <input aria-label={prefix === "W" ? "视频宽度" : "视频高度"} type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
         </label>
     );
 }
 
-function NumberInput({ value, min, max, theme, onChange }: { value: string; min: number; max: number; theme: CanvasTheme; onChange: (value: string) => void }) {
-    return <input type="number" min={min} max={max} className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }} value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />;
+function NumberInput({ label, value, min, max, theme, onChange }: { label: string; value: string; min: number; max: number; theme: CanvasTheme; onChange: (value: string) => void }) {
+    return <input aria-label={label} type="number" min={min} max={max} className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }} value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />;
 }
 
 function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {
@@ -300,7 +300,7 @@ function SwitchRow({ label, checked, theme, onChange }: { label: string; checked
                 {label}
             </span>
             <span onMouseDown={(event) => event.stopPropagation()}>
-                <Switch size="small" checked={checked} onChange={onChange} />
+                <Switch aria-label={label} size="small" checked={checked} onChange={onChange} />
             </span>
         </div>
     );

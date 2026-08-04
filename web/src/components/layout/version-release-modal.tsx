@@ -80,6 +80,9 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     <a href={`${PUBLIC_SOURCE_URL}/PATCHES.md`} target="_blank" rel="noreferrer" className="text-stone-600 underline-offset-2 hover:underline dark:text-stone-300">
                         FYJIT 派生补丁说明
                     </a>
+                    <a href={`${PUBLIC_SOURCE_URL}/THIRD_PARTY_NOTICES.md`} target="_blank" rel="noreferrer" className="text-stone-600 underline-offset-2 hover:underline dark:text-stone-300">
+                        第三方许可证清单
+                    </a>
                 </div>
                 <div className="max-h-[56vh] overflow-y-auto pr-2">
                     <Timeline

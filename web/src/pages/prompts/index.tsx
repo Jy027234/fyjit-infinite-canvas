@@ -214,11 +214,11 @@ export default function PromptsPage() {
                     </div>
                     <div className="mx-auto mt-7 flex max-w-6xl flex-col gap-3 md:flex-row md:flex-wrap">
                         <Input allowClear size="large" prefix={<Search className="size-4 text-stone-400" />} value={search} placeholder="搜索标题或正文" onChange={(event) => { setPage(1); setSearch(event.target.value); }} />
-                        <Select size="large" className="md:w-40" value={category} options={[{ label: "全部分类", value: "" }, ...categoryOptions]} onChange={(value) => { setPage(1); setCategory(value); }} />
-                        <Select size="large" className="md:w-40" value={promptType} options={[{ label: "全部类型", value: "" }, ...categoryOptions]} onChange={(value) => { setPage(1); setPromptType(value); }} />
+                        <Select aria-label="提示词分类" size="large" className="md:w-40" value={category} options={[{ label: "全部分类", value: "" }, ...categoryOptions]} onChange={(value) => { setPage(1); setCategory(value); }} />
+                        <Select aria-label="提示词类型" size="large" className="md:w-40" value={promptType} options={[{ label: "全部类型", value: "" }, ...categoryOptions]} onChange={(value) => { setPage(1); setPromptType(value); }} />
                         <Input allowClear size="large" className="md:w-40" value={tag} placeholder="标签" onChange={(event) => { setPage(1); setTag(event.target.value); }} />
-                        <Select size="large" className="md:w-40" value={sourceType} options={[{ label: "全部来源", value: "" }, { label: "我的创作", value: "user" }, { label: "文件导入", value: "import" }, { label: "外部来源", value: "external" }]} onChange={(value) => { setPage(1); setSourceType(value); }} />
-                        <div className="flex shrink-0 items-center gap-2 rounded-lg border border-stone-200 px-3 dark:border-stone-800"><Switch size="small" checked={favorite} onChange={(value) => { setPage(1); setFavorite(value); }} /><span className="text-sm">仅收藏</span></div>
+                        <Select aria-label="提示词来源" size="large" className="md:w-40" value={sourceType} options={[{ label: "全部来源", value: "" }, { label: "我的创作", value: "user" }, { label: "文件导入", value: "import" }, { label: "外部来源", value: "external" }]} onChange={(value) => { setPage(1); setSourceType(value); }} />
+                        <div className="flex shrink-0 items-center gap-2 rounded-lg border border-stone-200 px-3 dark:border-stone-800"><Switch aria-label="仅收藏" size="small" checked={favorite} onChange={(value) => { setPage(1); setFavorite(value); }} /><span className="text-sm">仅收藏</span></div>
                         <Button size="large" icon={<Upload className="size-4" />} onClick={() => importInputRef.current?.click()}>导入 JSON</Button>
                         <Button type="primary" size="large" icon={<Plus className="size-4" />} onClick={openCreate}>新建提示词</Button>
                     </div>

@@ -1,4 +1,4 @@
-import type { PromptSource } from "./prompt-source-presets";
+import { isPromptSourceApproved, type PromptSource } from "./prompt-source-presets";
 
 export type RawPrompt = {
     id: string;
@@ -28,6 +28,7 @@ async function fetchSource(source: PromptSource, options?: RunOptions) {
 }
 
 export async function runPromptSource(source: PromptSource, options?: RunOptions): Promise<RawPrompt[]> {
+    if (!isPromptSourceApproved(source)) throw new Error(`「${source.name}」未通过授权审计，仅提供来源外链`);
     if (!source.url.trim()) throw new Error("JSON URL 不能为空");
     let data: unknown;
     try {

@@ -589,7 +589,7 @@ export default function ImagePage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? "松开即可添加参考图" : `暂无参考图，可将图片拖到这里，最多 ${maxImageReferences} 张`}</div> : null}
+                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500 dark:text-stone-400">{isReferenceDragActive ? "松开即可添加参考图" : `暂无参考图，可将图片拖到这里，最多 ${maxImageReferences} 张`}</div> : null}
                                 </div>
                             </div> : null}
 
@@ -871,7 +871,7 @@ function LogPanel({
                         onClick={() => onPreviewLog(log)}
                     />
                 ))}
-                {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">暂无生成记录</div> : null}
+                {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">暂无生成记录</div> : null}
             </div>
         </>
     );

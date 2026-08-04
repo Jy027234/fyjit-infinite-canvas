@@ -37,7 +37,22 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     }, [source, load]);
 
     const saveAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
+        addAsset({
+            kind: "text",
+            title: item.title,
+            coverUrl: item.coverUrl,
+            tags: item.tags,
+            source: item.category,
+            data: { content: item.prompt },
+            metadata: {
+                source: "prompt-library",
+                promptId: item.id,
+                githubUrl: item.githubUrl,
+                sourceLicense: item.sourceLicense,
+                sourceLicenseUrl: item.sourceLicenseUrl,
+                sourceAttribution: item.sourceAttribution,
+            },
+        });
         message.success("已加入我的资产");
     };
 

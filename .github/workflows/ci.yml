@@ -38,6 +38,10 @@ jobs:
         working-directory: web
         run: bun run boundary:check
 
+      - name: Third-party inventory is generated
+        working-directory: web
+        run: bun run licenses:check
+
       - name: Tests
         working-directory: web
         run: bun run test
@@ -63,10 +67,13 @@ jobs:
           test -s NOTICE
           test -s UPSTREAM.md
           test -s PATCHES.md
+          test -s THIRD_PARTY_NOTICES.md
+          grep -q "THIRD_PARTY_NOTICES.md" NOTICE
           grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" LICENSE
           grep -q "335467ec0d98aca69df49c285edd56eb00e736e6" UPSTREAM.md
           grep -q "not granted under the software" NOTICE
           grep -q "PUBLIC_SOURCE_URL" web/src/components/layout/version-release-modal.tsx
+          grep -q "THIRD_PARTY_NOTICES.md" web/src/components/layout/version-release-modal.tsx
 
   image:
     runs-on: ubuntu-latest

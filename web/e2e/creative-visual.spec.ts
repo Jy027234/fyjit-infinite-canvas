@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const viewports = [
     { name: "390x844", width: 390, height: 844 },
@@ -35,6 +36,46 @@ for (const viewport of [viewports[0], viewports[3]]) {
         await expect(page).toHaveScreenshot(`assets-${viewport.name}.png`, { animations: "disabled", fullPage: true });
     });
 }
+
+for (const route of ["image", "video", "assets", "prompts", "canvas"]) {
+    for (const viewport of [viewports[0], viewports[3]]) {
+        test(`${route} passes automated accessibility checks ${viewport.name}`, async ({ page }) => {
+            test.setTimeout(60_000);
+            await prepareCreativePage(page, viewport);
+            await page.goto(`/creative/${route}`, { waitUntil: "domcontentloaded" });
+            await expect(page.locator("h1").first()).toBeVisible();
+            const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+            expect(results.violations, `${route} ${viewport.name}: ${formatAxeViolations(results.violations)}`).toEqual([]);
+        });
+    }
+}
+
+test("keyboard focus, target size, and reduced motion remain usable", async ({ page }) => {
+    await prepareCreativePage(page, viewports[0]);
+    await page.goto("/creative/image");
+
+    const skipLink = page.getByRole("link", { name: "跳到主要内容" });
+    await skipLink.focus();
+    await expect(skipLink).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#creative-main")).toBeFocused();
+
+    const action = page.getByRole("button", { name: "开始生成", exact: true });
+    await action.scrollIntoViewIfNeeded();
+    const box = await action.boundingBox();
+    expect(box?.width || 0).toBeGreaterThanOrEqual(24);
+    expect(box?.height || 0).toBeGreaterThanOrEqual(24);
+
+    expect(await page.evaluate(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+    const longestMotion = await page.evaluate(() => {
+        const durations = Array.from(document.querySelectorAll("*"), (element) => {
+            const style = getComputedStyle(element);
+            return [...style.animationDuration.split(","), ...style.transitionDuration.split(",")].map((value) => (value.endsWith("ms") ? Number.parseFloat(value) : Number.parseFloat(value) * 1000));
+        }).flat();
+        return Math.max(0, ...durations.filter(Number.isFinite));
+    });
+    expect(longestMotion).toBeLessThanOrEqual(1);
+});
 
 test("account menu exposes sign out on desktop and mobile", async ({ page }) => {
     await prepareCreativePage(page, viewports[3]);
@@ -511,4 +552,8 @@ async function expectPrimaryGenerateActionReachable(page: Page) {
     await expect(action).toBeEnabled();
     await action.focus();
     await expect(action).toBeFocused();
+}
+
+function formatAxeViolations(violations: Array<{ id: string; nodes: Array<{ target: unknown }> }>) {
+    return violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => String(node.target)).join(", ")}`).join("; ");
 }

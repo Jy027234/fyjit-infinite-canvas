@@ -472,6 +472,31 @@
     mix-blend-mode: normal;
 }
 
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        transition-delay: 0ms !important;
+    }
+}
+
+.dark .ant-empty-description {
+    color: #a8a29e;
+}
+
+.dark .ant-select-placeholder {
+    color: #a8a29e !important;
+}
+
+.dark .ant-btn-dangerous.ant-btn-color-dangerous {
+    border-color: #f87171;
+    color: #f87171;
+}
+
 .agent-streamdown {
     overflow-wrap: anywhere;
 }

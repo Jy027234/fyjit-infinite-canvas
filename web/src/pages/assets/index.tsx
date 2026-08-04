@@ -194,7 +194,7 @@ export default function AssetsPage() {
     };
 
     const filterControls = <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Select allowClear value={sourceModule || undefined} placeholder="来源模块" options={[
+        <Select aria-label="来源模块" allowClear value={sourceModule || undefined} placeholder="来源模块" options={[
             { label: "上传", value: "upload" }, { label: "手动创建", value: "manual" }, { label: "生图工作台", value: "image-workbench" }, { label: "视频创作台", value: "video-workbench" }, { label: "角色工坊", value: "character-studio" }, { label: "影视制作", value: "filmgen" }, { label: "无限画布", value: "canvas" },
         ]} onChange={(value) => { setPage(1); setSourceModule(value || ""); }} />
         <Input allowClear value={model} placeholder="模型 ID" onChange={(event) => { setPage(1); setModel(event.target.value); }} />
@@ -206,8 +206,8 @@ export default function AssetsPage() {
             setCreatedFrom(dates?.[0]?.startOf("day").unix());
             setCreatedTo(dates?.[1]?.endOf("day").unix());
         }} />
-        <label className="flex min-h-8 items-center gap-2 text-sm"><Switch size="small" checked={favoriteOnly} onChange={(value) => { setPage(1); setFavoriteOnly(value); }} />仅收藏</label>
-        <label className="flex min-h-8 items-center gap-2 text-sm"><Switch size="small" checked={trashOnly} onChange={(value) => { setPage(1); setTrashOnly(value); }} />回收站</label>
+        <label className="flex min-h-8 items-center gap-2 text-sm"><Switch aria-label="仅收藏" size="small" checked={favoriteOnly} onChange={(value) => { setPage(1); setFavoriteOnly(value); }} />仅收藏</label>
+        <label className="flex min-h-8 items-center gap-2 text-sm"><Switch aria-label="回收站" size="small" checked={trashOnly} onChange={(value) => { setPage(1); setTrashOnly(value); }} />回收站</label>
     </div>;
 
     return (

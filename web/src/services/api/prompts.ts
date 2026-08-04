@@ -2,12 +2,15 @@ import localforage from "localforage";
 
 import { runPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import type { PromptSource } from "./prompt-source-presets";
+import { canSyncPromptSource, type PromptSource } from "./prompt-source-presets";
 
 export type Prompt = RawPrompt & {
     sourceId: string;
     category: string;
     githubUrl: string;
+    sourceLicense: string;
+    sourceLicenseUrl: string;
+    sourceAttribution: string;
 };
 
 export const ALL_PROMPTS_OPTION = "全部";
@@ -49,7 +52,7 @@ const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", s
 const loadingSources = new Map<string, Promise<PromptSourceRefreshResult>>();
 
 function enabledSources() {
-    return usePromptSourceStore.getState().sources.filter((source) => source.enabled);
+    return usePromptSourceStore.getState().sources.filter(canSyncPromptSource);
 }
 
 function cacheKey(sourceId: string) {
@@ -57,7 +60,7 @@ function cacheKey(sourceId: string) {
 }
 
 function sourceSignature(source: PromptSource) {
-    const value = `${source.name}\n${source.url}\n${source.homepage}`;
+    const value = `${source.name}\n${source.url}\n${source.homepage}\n${source.licenseId}\n${source.licenseUrl}\n${source.attribution}\n${source.syncPolicy}\n${source.auditStatus}`;
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) | 0;
     return `${value.length}:${hash}`;
@@ -71,6 +74,9 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
         sourceId: source.id,
         category: source.name,
         githubUrl: item.sourceUrl || source.homepage,
+        sourceLicense: source.licenseId,
+        sourceLicenseUrl: source.licenseUrl,
+        sourceAttribution: source.attribution,
     }));
 }
 
@@ -79,6 +85,10 @@ async function readSourceCache(sourceId: string) {
 }
 
 async function refreshSourceRecord(source: PromptSource): Promise<PromptSourceRefreshResult> {
+    if (!canSyncPromptSource(source)) {
+        await promptCacheStore.removeItem(cacheKey(source.id));
+        return { sourceId: source.id, sourceName: source.name, count: 0, lastSuccessAt: "", lastError: `「${source.name}」未通过授权审计，仅提供来源外链`, success: false };
+    }
     const previous = await readSourceCache(source.id);
     try {
         const items = withSourceMeta(source, await runPromptSource(source));
@@ -111,6 +121,10 @@ function getOrStartRefresh(source: PromptSource) {
 }
 
 async function getSourcePrompts(source: PromptSource): Promise<Prompt[]> {
+    if (!canSyncPromptSource(source)) {
+        await promptCacheStore.removeItem(cacheKey(source.id));
+        throw new Error(`「${source.name}」未通过授权审计，仅提供来源外链`);
+    }
     const cached = await readSourceCache(source.id);
     if (cached) {
         const stale = cached.signature !== sourceSignature(source) || Date.now() - cached.fetchedAt >= cacheTtlMs;
@@ -186,6 +200,10 @@ export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceR
 export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
     const entries = await Promise.all(
         usePromptSourceStore.getState().sources.map(async (source) => {
+            if (!canSyncPromptSource(source)) {
+                await promptCacheStore.removeItem(cacheKey(source.id));
+                return [source.id, { sourceId: source.id, count: 0, lastSuccessAt: "", lastError: "" }] as const;
+            }
             const cache = await readSourceCache(source.id);
             return [source.id, { sourceId: source.id, count: cache?.items?.length || 0, lastSuccessAt: cache?.lastSuccessAt || "", lastError: cache?.lastError || "" }] as const;
         }),
