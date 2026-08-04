@@ -16,6 +16,7 @@ export type PromptSource = {
 
 export const PROMPT_REGISTRY_HOMEPAGE = "https://github.com/yukkcat/image-prompts";
 const PROMPT_REGISTRY_SOURCE_BASE = "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources";
+const serverDisabledSourceIds = new Set<string>();
 
 export function createPromptSource(source?: Partial<PromptSource>): PromptSource {
     return {
@@ -59,7 +60,16 @@ function registrySource(id: string, name: string, homepage: string, licenseId: s
 }
 
 export function canSyncPromptSource(source: PromptSource) {
-    return source.enabled && isPromptSourceApproved(source);
+    return source.enabled && !isPromptSourceDisabledByServer(source.id) && isPromptSourceApproved(source);
+}
+
+export function applyPromptSourcePolicy(disabledSourceIds: string[]) {
+    serverDisabledSourceIds.clear();
+    disabledSourceIds.forEach((sourceId) => serverDisabledSourceIds.add(sourceId));
+}
+
+export function isPromptSourceDisabledByServer(sourceId: string) {
+    return serverDisabledSourceIds.has(sourceId);
 }
 
 export function isPromptSourceApproved(source: PromptSource) {

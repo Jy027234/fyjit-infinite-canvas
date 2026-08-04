@@ -15,6 +15,7 @@ divergence. Detailed user-facing changes are also recorded in `CHANGELOG.md`.
 | FYJIT navigation and session | Align page titles, analytics route names, theme/user actions, and sign-out behavior with the main site. | Signing out clears FYJIT-scoped browser state and delegates the authenticated session transition to the main site. |
 | Responsive workbench UI | Add H5 drawers, desktop collapsible panels, persisted layout preferences, and capability-driven video controls. | Frozen Windows/Linux screenshots and Playwright accessibility assertions must be reviewed when upstream layout changes. |
 | Compliance and provenance | Retain AGPL, upstream attribution/history, runtime commit/source metadata, and immutable multi-architecture image workflows. | Releases must be tagged; deployment by a floating `main` image is unsupported. `NOTICE`, `UPSTREAM.md`, and this register are release-gated. |
+| Prompt source governance | Require per-source license metadata before full synchronization, keep unclear sources link-only, accept metadata-only user reports through the FYJIT BFF, and honor server takedowns before cache or network access. | Prompt source changes must preserve attribution metadata and the source-policy tests; the browser must never persist or transmit provider credentials or copy reported remote prompt bodies. |
 
 ## Conflict handling
 

@@ -1,8 +1,9 @@
 import localforage from "localforage";
 
 import { runPromptSource, type RawPrompt } from "./prompt-source-runtime";
+import { fetchCreativePromptSourcePolicy } from "./creative";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import { canSyncPromptSource, type PromptSource } from "./prompt-source-presets";
+import { applyPromptSourcePolicy, canSyncPromptSource, type PromptSource } from "./prompt-source-presets";
 
 export type Prompt = RawPrompt & {
     sourceId: string;
@@ -50,6 +51,23 @@ type SourceCache = PromptSourceStatus & {
 const cacheTtlMs = 1000 * 60 * 60;
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 const loadingSources = new Map<string, Promise<PromptSourceRefreshResult>>();
+let policyRequest: Promise<void> | undefined;
+let policySyncedAt = 0;
+
+export function syncPromptSourcePolicy() {
+    if (Date.now() - policySyncedAt < 30_000) return Promise.resolve();
+    if (!policyRequest) {
+        policyRequest = fetchCreativePromptSourcePolicy()
+            .then((policy) => {
+                applyPromptSourcePolicy(policy.disabled_source_ids || []);
+                policySyncedAt = Date.now();
+            })
+            .finally(() => {
+                policyRequest = undefined;
+            });
+    }
+    return policyRequest;
+}
 
 function enabledSources() {
     return usePromptSourceStore.getState().sources.filter(canSyncPromptSource);
@@ -150,6 +168,7 @@ async function getAllPrompts(): Promise<Prompt[]> {
 }
 
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
+    await syncPromptSourcePolicy();
     const items = await getAllPrompts();
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
@@ -167,12 +186,14 @@ export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROM
 }
 
 export async function fetchSourcePrompts(sourceId: string): Promise<Prompt[]> {
+    await syncPromptSourcePolicy();
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error("提示词来源不存在");
     return getSourcePrompts(source);
 }
 
 export async function refreshSource(sourceId: string): Promise<PromptSourceRefreshResult> {
+    await syncPromptSourcePolicy();
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error("提示词来源不存在");
     const result = await getOrStartRefresh(source);
@@ -181,11 +202,13 @@ export async function refreshSource(sourceId: string): Promise<PromptSourceRefre
 }
 
 export async function refreshAllSources(): Promise<PromptSourceRefreshSummary> {
+    await syncPromptSourcePolicy();
     const results = await Promise.all(enabledSources().map(getOrStartRefresh));
     return summarizeRefresh(results);
 }
 
 export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceRefreshSummary> {
+    await syncPromptSourcePolicy();
     const sources = await Promise.all(
         enabledSources().map(async (source) => {
             const cached = await readSourceCache(source.id);
@@ -198,6 +221,7 @@ export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceR
 }
 
 export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
+    await syncPromptSourcePolicy();
     const entries = await Promise.all(
         usePromptSourceStore.getState().sources.map(async (source) => {
             if (!canSyncPromptSource(source)) {

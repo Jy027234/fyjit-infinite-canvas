@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
-import { DEFAULT_PROMPT_SOURCES, createPromptSource, isPromptSourceApproved } from "./prompt-source-presets";
+import { applyPromptSourcePolicy, canSyncPromptSource, DEFAULT_PROMPT_SOURCES, createPromptSource, isPromptSourceApproved } from "./prompt-source-presets";
 import { runPromptSource } from "./prompt-source-runtime";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
+    applyPromptSourcePolicy([]);
 });
 
 describe("prompt source licensing policy", () => {
@@ -49,5 +50,15 @@ describe("prompt source licensing policy", () => {
         });
 
         await expect(runPromptSource(source)).resolves.toMatchObject([{ id: "one", prompt: "Draw one" }]);
+    });
+
+    test("server takedown overrides a locally enabled audited source", () => {
+        const source = DEFAULT_PROMPT_SOURCES.find((item) => item.id === "awesome-gpt-image");
+        expect(source).toBeDefined();
+        expect(canSyncPromptSource(source!)).toBe(true);
+
+        applyPromptSourcePolicy([source!.id]);
+
+        expect(canSyncPromptSource(source!)).toBe(false);
     });
 });

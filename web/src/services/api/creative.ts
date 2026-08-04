@@ -13,6 +13,27 @@ export type CreativeUser = {
 
 export type CreativeFeatureFlags = Record<string, boolean>;
 
+export type CreativePromptSourcePolicy = {
+    disabled_source_ids: string[];
+    version: number;
+};
+
+export type CreativePromptSourceReportInput = {
+    source_id: string;
+    source_name: string;
+    prompt_external_id?: string;
+    prompt_title?: string;
+    source_url: string;
+    reason: "copyright" | "attribution" | "unsafe" | "privacy" | "broken" | "other";
+    details: string;
+};
+
+export type CreativePromptSourceReport = CreativePromptSourceReportInput & {
+    report_id: string;
+    status: "pending" | "resolved" | "dismissed" | "source_disabled";
+    created_at: number;
+};
+
 export type CreativeBootstrap = {
     user: CreativeUser;
     features: CreativeFeatureFlags;
@@ -303,6 +324,19 @@ export function fetchCreativeBootstrap(signal?: AbortSignal) {
 
 export function fetchCreativeCapabilities(signal?: AbortSignal) {
     return creativeRequest<CreativeCapabilities>("/capabilities", { signal });
+}
+
+export function fetchCreativePromptSourcePolicy(signal?: AbortSignal) {
+    return creativeRequest<CreativePromptSourcePolicy>("/prompt-sources/policy", { signal });
+}
+
+export function createCreativePromptSourceReport(request: CreativePromptSourceReportInput, signal?: AbortSignal) {
+    return creativeRequest<CreativePromptSourceReport>("/prompt-source-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+        signal,
+    });
 }
 
 export function fetchCreativeModels(options?: { capability?: string; group?: string; signal?: AbortSignal }) {

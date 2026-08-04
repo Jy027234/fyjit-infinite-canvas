@@ -1,5 +1,5 @@
 import { App, Button, Empty, Modal, Space, Table, Tag } from "antd";
-import { Copy, FolderPlus, RefreshCw } from "lucide-react";
+import { Copy, Flag, FolderPlus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
@@ -7,12 +7,14 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
+import { PromptSourceReportModal } from "./prompt-source-report-modal";
 
 export function PromptSourceContentModal({ source, onClose }: { source: PromptSource | null; onClose: () => void }) {
     const { message } = App.useApp();
     const [items, setItems] = useState<Prompt[]>([]);
     const [loading, setLoading] = useState(false);
     const [detail, setDetail] = useState<Prompt | null>(null);
+    const [reporting, setReporting] = useState<Prompt | null>(null);
     const copyText = useCopyText();
     const addAsset = useAssetStore((state) => state.addAsset);
 
@@ -116,7 +118,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                         },
                         {
                             title: "操作",
-                            width: 210,
+                            width: 270,
                             render: (_, item) => (
                                 <Space size={4} wrap>
                                     <Button size="small" type="text" icon={<Copy className="size-3.5" />} onClick={() => copyText(item.prompt, "提示词已复制")}>
@@ -128,13 +130,17 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                                     <Button size="small" type="text" icon={<FolderPlus className="size-3.5" />} onClick={() => saveAsset(item)}>
                                         加入资产
                                     </Button>
+                                    <Button size="small" type="text" danger icon={<Flag className="size-3.5" />} onClick={() => setReporting(item)}>
+                                        举报
+                                    </Button>
                                 </Space>
                             ),
                         },
                     ]}
                 />
             </Modal>
-            <PromptDetailDialog prompt={detail} onClose={() => setDetail(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={saveAsset} />
+            <PromptDetailDialog prompt={detail} onClose={() => setDetail(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={saveAsset} onReport={(prompt) => setReporting(prompt)} />
+            <PromptSourceReportModal source={reporting ? source : null} prompt={reporting} onClose={() => setReporting(null)} />
         </>
     );
 }
