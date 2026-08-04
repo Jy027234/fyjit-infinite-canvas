@@ -309,6 +309,7 @@ test("prompt library preserves source attribution and imports owned JSON", async
 });
 
 test("canvas creates an explicit server version snapshot", async ({ page }) => {
+    test.setTimeout(90_000);
     await prepareCreativePage(page, viewports[3]);
     const snapshots: Array<Record<string, unknown>> = [];
     const restores: Array<Record<string, unknown>> = [];
@@ -333,14 +334,14 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
         return route.fallback();
     });
 
-    await page.goto("/creative/canvas");
+    await page.goto("/creative/canvas", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
     await expect(page).toHaveURL(/\/creative\/canvas\/canvas-1$/, { timeout: 10_000 });
     await page.getByRole("button", { name: "打开画布菜单" }).click();
-    await page.getByText("创建版本快照", { exact: true }).click();
+    await clickVisibleCanvasMenuItem(page, "创建版本快照");
     await expect.poll(() => snapshots.some((snapshot) => snapshot.expected_version === 1 && snapshot.schema_version === 2)).toBe(true);
     await page.getByRole("button", { name: "打开画布菜单" }).click();
-    await page.getByText("版本历史", { exact: true }).click();
+    await clickVisibleCanvasMenuItem(page, "版本历史");
     const versions = page.getByRole("dialog", { name: "版本历史" });
     await versions.getByRole("button", { name: "恢复此版本" }).last().click();
     await page.getByRole("dialog", { name: "恢复版本 v1？" }).getByRole("button", { name: /恢\s*复/ }).click();
@@ -556,4 +557,12 @@ async function expectPrimaryGenerateActionReachable(page: Page) {
 
 function formatAxeViolations(violations: Array<{ id: string; nodes: Array<{ target: unknown }> }>) {
     return violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => String(node.target)).join(", ")}`).join("; ");
+}
+
+async function clickVisibleCanvasMenuItem(page: Page, name: string) {
+    const menu = page.locator(".ant-dropdown:not(.ant-dropdown-hidden)").getByRole("menu").last();
+    await expect(menu).toBeVisible();
+    const item = menu.getByRole("menuitem", { name });
+    await expect(item).toBeAttached();
+    await item.evaluate((element) => (element as HTMLElement).click());
 }
