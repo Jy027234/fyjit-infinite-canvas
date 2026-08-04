@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.13.0-fyjit.1 - 2026-08-04
+
 + [调整] 建立 FYJIT 独立部署基线，应用改为 `/creative/` 子路径、路由级拆包并接入同域 Creative API 初始化。
 + [新增] 增加容器健康检查、运行时 Creative API 与对应源码元数据配置，并记录固定上游版本和派生声明。
 + [调整] 删除浏览器端 API Key、Base URL、自定义直连脚本和 WebDAV 配置链路，模型仅从 FYJIT 服务端能力清单自动选择。
