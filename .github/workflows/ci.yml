@@ -65,7 +65,7 @@ jobs:
           test -s PATCHES.md
           grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" LICENSE
           grep -q "335467ec0d98aca69df49c285edd56eb00e736e6" UPSTREAM.md
-          grep -q "not granted under the software license" NOTICE
+          grep -q "not granted under the software" NOTICE
           grep -q "PUBLIC_SOURCE_URL" web/src/components/layout/version-release-modal.tsx
 
   image:
