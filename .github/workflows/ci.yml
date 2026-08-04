@@ -62,8 +62,11 @@ jobs:
           test -s LICENSE
           test -s NOTICE
           test -s UPSTREAM.md
+          test -s PATCHES.md
           grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" LICENSE
           grep -q "335467ec0d98aca69df49c285edd56eb00e736e6" UPSTREAM.md
+          grep -q "not granted under the software license" NOTICE
+          grep -q "PUBLIC_SOURCE_URL" web/src/components/layout/version-release-modal.tsx
 
   image:
     runs-on: ubuntu-latest
@@ -85,6 +88,16 @@ jobs:
             SOURCE_URL=https://github.com/${{ github.repository }}/tree/${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify immutable source metadata
+        shell: bash
+        run: |
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}"
+          docker run --rm --entrypoint sh \
+            -e EXPECTED_COMMIT="${GITHUB_SHA}" \
+            -e EXPECTED_URL="${expected_url}" \
+            fyjit-creative-canvas:test \
+            -eu -c 'test "$SOURCE_COMMIT" = "$EXPECTED_COMMIT"; test "$SOURCE_URL" = "$EXPECTED_URL"'
 
       - name: Scan image
         uses: aquasecurity/trivy-action@v0.36.0

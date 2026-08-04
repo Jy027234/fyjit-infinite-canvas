@@ -67,6 +67,20 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     <span className="block text-xs text-stone-500 dark:text-stone-400">本服务对应源码</span>
                     <span className="mt-1 block font-mono text-xs">{SOURCE_COMMIT}</span>
                 </a>
+                <div className="mb-5 flex flex-wrap gap-x-4 gap-y-2 text-xs">
+                    <a href={`${PUBLIC_SOURCE_URL}/LICENSE`} target="_blank" rel="noreferrer" className="text-stone-600 underline-offset-2 hover:underline dark:text-stone-300">
+                        AGPL-3.0 许可证
+                    </a>
+                    <a href={`${PUBLIC_SOURCE_URL}/NOTICE`} target="_blank" rel="noreferrer" className="text-stone-600 underline-offset-2 hover:underline dark:text-stone-300">
+                        上游作者与版权声明
+                    </a>
+                    <a href={`${PUBLIC_SOURCE_URL}/UPSTREAM.md`} target="_blank" rel="noreferrer" className="text-stone-600 underline-offset-2 hover:underline dark:text-stone-300">
+                        上游版本与同步策略
+                    </a>
+                    <a href={`${PUBLIC_SOURCE_URL}/PATCHES.md`} target="_blank" rel="noreferrer" className="text-stone-600 underline-offset-2 hover:underline dark:text-stone-300">
+                        FYJIT 派生补丁说明
+                    </a>
+                </div>
                 <div className="max-h-[56vh] overflow-y-auto pr-2">
                     <Timeline
                         items={releases.map((release) => ({
