@@ -48,13 +48,13 @@ jobs:
           VITE_BASE: /creative/
         run: bun run build
 
-      - name: Install Chromium for visual regression
-        working-directory: web
-        run: bunx playwright install --with-deps chromium
-
       - name: Responsive visual regression
-        working-directory: web
-        run: bun run test:e2e
+        run: >-
+          docker run --rm --ipc=host
+          -v "${{ github.workspace }}:/repo"
+          -w /repo/web
+          mcr.microsoft.com/playwright:v1.62.1-noble
+          npx playwright test
 
       - name: License and source gate
         shell: bash

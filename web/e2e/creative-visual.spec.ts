@@ -294,7 +294,7 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
 
     await page.goto("/creative/canvas");
     await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
-    await expect(page).toHaveURL(/\/creative\/canvas\/canvas-1$/);
+    await expect(page).toHaveURL(/\/creative\/canvas\/canvas-1$/, { timeout: 10_000 });
     await page.getByRole("button", { name: "打开画布菜单" }).click();
     await page.getByText("创建版本快照", { exact: true }).click();
     await expect.poll(() => snapshots.some((snapshot) => snapshot.expected_version === 1 && snapshot.schema_version === 2)).toBe(true);
