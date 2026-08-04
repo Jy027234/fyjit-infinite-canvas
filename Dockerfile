@@ -13,7 +13,7 @@ COPY web ./
 RUN bun run build
 
 # 运行镜像：只启动静态前端，业务请求统一交给同域 FYJIT Creative BFF。
-FROM nginx:1.27-alpine
+FROM nginx:1.31.3-alpine3.24@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
 
 ARG SOURCE_COMMIT=unknown
 ARG SOURCE_URL=
