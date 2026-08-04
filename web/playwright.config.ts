@@ -10,6 +10,13 @@ export default defineConfig({
     workers: process.env.CI ? 2 : 4,
     retries: process.env.CI ? 2 : 0,
     reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
+    expect: {
+        toHaveScreenshot: {
+            // Chromium/font rasterization can vary by a handful of edge pixels
+            // between the pinned container and GitHub's host CPU.
+            maxDiffPixels: 10,
+        },
+    },
     use: {
         baseURL: externalBaseURL || `http://127.0.0.1:${port}/creative`,
         locale: "zh-CN",
