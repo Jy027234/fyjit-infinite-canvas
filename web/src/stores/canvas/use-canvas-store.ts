@@ -1,14 +1,8 @@
 import { create } from "zustand";
 
-import {
-    createCreativeCanvas,
-    deleteCreativeCanvas,
-    fetchCreativeCanvases,
-    restoreCreativeCanvasRevision,
-    updateCreativeCanvas,
-    uploadCreativeAsset,
-    type CreativeCanvasProject,
-} from "@/services/api/creative";
+import { createCreativeCanvas, deleteCreativeCanvas, fetchCreativeCanvases, restoreCreativeCanvasRevision, updateCreativeCanvas, uploadCreativeAsset, type CreativeCanvasProject } from "@/services/api/creative";
+import { getImageBlob } from "@/services/image-storage";
+import { getMediaBlob } from "@/services/file-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -69,10 +63,7 @@ function migrateCanvasDocument(source: Partial<CanvasDocument> | undefined, sche
                 activeChatId: typeof document.activeChatId === "string" ? document.activeChatId : null,
                 backgroundMode: ["dots", "lines", "blank"].includes(document.backgroundMode) ? document.backgroundMode : "lines",
                 showImageInfo: Boolean(document.showImageInfo),
-                viewport:
-                    viewport && Number.isFinite(viewport.x) && Number.isFinite(viewport.y) && Number.isFinite(viewport.k) && viewport.k > 0
-                        ? viewport
-                        : initialViewport,
+                viewport: viewport && Number.isFinite(viewport.x) && Number.isFinite(viewport.y) && Number.isFinite(viewport.k) && viewport.k > 0 ? viewport : initialViewport,
             };
         }
         version += 1;
@@ -128,44 +119,70 @@ async function normalizeServerDocument(document: CanvasDocument): Promise<Canvas
     return (await normalizeCanvasValue(document)) as CanvasDocument;
 }
 
-async function normalizeCanvasValue(value: unknown): Promise<unknown> {
-    if (Array.isArray(value)) return Promise.all(value.map(normalizeCanvasValue));
+type CanvasNormalizationDependencies = {
+    readStoredBlob: (storageKey: string) => Promise<Blob | null>;
+    readUrlBlob: (url: string) => Promise<Blob>;
+    uploadBlob: (blob: Blob, title: string) => Promise<{ asset_id: string; preview_path?: string }>;
+};
+
+const canvasNormalizationDependencies: CanvasNormalizationDependencies = {
+    readStoredBlob: async (storageKey) => (storageKey.startsWith("image:") ? getImageBlob(storageKey) : getMediaBlob(storageKey)),
+    readUrlBlob: async (url) => {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.blob();
+        } catch {
+            throw new Error("画布本地素材读取失败，请保留当前页面并重新选择该素材后重试");
+        }
+    },
+    uploadBlob: (blob, title) => uploadCreativeAsset(blob, title),
+};
+
+export async function normalizeCanvasValue(value: unknown, dependencies: CanvasNormalizationDependencies = canvasNormalizationDependencies): Promise<unknown> {
+    if (Array.isArray(value)) return Promise.all(value.map((item) => normalizeCanvasValue(item, dependencies)));
     if (!value || typeof value !== "object") return value;
     const source = value as Record<string, unknown>;
     const result: Record<string, unknown> = {};
     let uploadedAssetId = typeof source.assetId === "string" ? source.assetId : undefined;
+    const storageKey = typeof source.storageKey === "string" ? source.storageKey : "";
     for (const [key, child] of Object.entries(source)) {
         if ((key === "content" || key === "dataUrl" || key === "url") && typeof child === "string" && (/^data:(image|video|audio)\//i.test(child) || child.startsWith("blob:"))) {
             if (uploadedAssetId) {
                 result[key] = `/api/creative/assets/${encodeURIComponent(uploadedAssetId)}/content`;
                 continue;
             }
-            const response = await fetch(child);
-            if (!response.ok) throw new Error("画布本地素材读取失败，无法同步到服务端");
-            const asset = await uploadCreativeAsset(await response.blob(), typeof source.title === "string" ? source.title : "画布素材");
+            const storedBlob = storageKey ? await dependencies.readStoredBlob(storageKey) : null;
+            const asset = await dependencies.uploadBlob(storedBlob || (await dependencies.readUrlBlob(child)), typeof source.title === "string" ? source.title : "画布素材");
             result[key] = asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`;
             uploadedAssetId = asset.asset_id;
             continue;
         }
         if (key === "storageKey" && uploadedAssetId) continue;
-        result[key] = await normalizeCanvasValue(child);
+        result[key] = await normalizeCanvasValue(child, dependencies);
     }
-    if (uploadedAssetId) result.assetId = uploadedAssetId;
+    if (uploadedAssetId) {
+        result.assetId = uploadedAssetId;
+        delete result.storageKey;
+    }
     return result;
 }
 
 function scheduleSave(projectId: string) {
     const current = saveTimers.get(projectId);
     if (current) window.clearTimeout(current);
-    saveTimers.set(projectId, window.setTimeout(() => {
-        saveTimers.delete(projectId);
-        const previous = saveChains.get(projectId) || Promise.resolve();
-        const next = previous.catch(() => undefined).then(() => persistProject(projectId));
-        const tracked = next.finally(() => {
-            if (saveChains.get(projectId) === tracked) saveChains.delete(projectId);
-        });
-        saveChains.set(projectId, tracked);
-    }, 800));
+    saveTimers.set(
+        projectId,
+        window.setTimeout(() => {
+            saveTimers.delete(projectId);
+            const previous = saveChains.get(projectId) || Promise.resolve();
+            const next = previous.catch(() => undefined).then(() => persistProject(projectId));
+            const tracked = next.finally(() => {
+                if (saveChains.get(projectId) === tracked) saveChains.delete(projectId);
+            });
+            saveChains.set(projectId, tracked);
+        }, 800),
+    );
 }
 
 async function persistProject(projectId: string) {
@@ -213,15 +230,20 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         return project.id;
     },
     importProject: async (source) => {
-        const document = await normalizeServerDocument(migrateCanvasDocument({
-            nodes: source.nodes || [],
-            connections: source.connections || [],
-            chatSessions: source.chatSessions || [],
-            activeChatId: source.activeChatId || null,
-            backgroundMode: source.backgroundMode || "lines",
-            showImageInfo: source.showImageInfo || false,
-            viewport: source.viewport || initialViewport,
-        }, source.schemaVersion || 1));
+        const document = await normalizeServerDocument(
+            migrateCanvasDocument(
+                {
+                    nodes: source.nodes || [],
+                    connections: source.connections || [],
+                    chatSessions: source.chatSessions || [],
+                    activeChatId: source.activeChatId || null,
+                    backgroundMode: source.backgroundMode || "lines",
+                    showImageInfo: source.showImageInfo || false,
+                    viewport: source.viewport || initialViewport,
+                },
+                source.schemaVersion || 1,
+            ),
+        );
         const created = await createCreativeCanvas<CanvasDocument>({ title: source.title || "导入画布", document, schema_version: CURRENT_CANVAS_SCHEMA_VERSION });
         const project = fromServer(created);
         set((state) => ({ projects: [project, ...state.projects] }));
@@ -233,9 +255,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         saveTimers.delete(id);
         const previous = saveChains.get(id) || Promise.resolve();
         let succeeded = false;
-        const next = previous.catch(() => undefined).then(async () => {
-            succeeded = await persistProject(id);
-        });
+        const next = previous
+            .catch(() => undefined)
+            .then(async () => {
+                succeeded = await persistProject(id);
+            });
         saveChains.set(id, next);
         await next;
         if (saveChains.get(id) === next) saveChains.delete(id);
@@ -247,14 +271,16 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         saveTimers.delete(id);
         const previous = saveChains.get(id) || Promise.resolve();
         let succeeded = false;
-        const next = previous.catch(() => undefined).then(async () => {
-            const current = get().projects.find((project) => project.id === id);
-            if (!current) return;
-            const restored = await restoreCreativeCanvasRevision<CanvasDocument>(id, revisionId, current.version);
-            const migrated = await migrateServerProject(restored);
-            set((state) => ({ projects: state.projects.map((project) => (project.id === id ? migrated : project)) }));
-            succeeded = true;
-        });
+        const next = previous
+            .catch(() => undefined)
+            .then(async () => {
+                const current = get().projects.find((project) => project.id === id);
+                if (!current) return;
+                const restored = await restoreCreativeCanvasRevision<CanvasDocument>(id, revisionId, current.version);
+                const migrated = await migrateServerProject(restored);
+                set((state) => ({ projects: state.projects.map((project) => (project.id === id ? migrated : project)) }));
+                succeeded = true;
+            });
         saveChains.set(id, next);
         try {
             await next;

@@ -23,11 +23,26 @@ export function CreativeReadinessNotice({ capabilityLabel, hasModel, hasToken }:
             message={`当前账号缺少${missing}`}
             description={
                 <div>
-                    <p>创作中心不会要求填写上游 API Key。请在 FYJIT 完成站内配置，或联系管理员开放当前分组的模型。</p>
+                    <p>
+                        创作中心直接使用当前账号的 FYJIT 本站 Token，不需要填写上游 API Key。{!hasModel ? `${capabilityLabel}工作台只显示具备对应能力的模型；其他类型模型不会混入，请联系管理员为当前分组新增或开放${capabilityLabel}模型。` : ""}
+                        {!hasToken ? "请同时创建本站 Token 或确认余额后重试。" : ""}
+                    </p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                        {!hasToken ? <Button size="small" href={fyjitUrl("/keys")}>创建或检查 Token</Button> : null}
-                        {!hasToken ? <Button size="small" href={fyjitUrl("/console/topup")}>充值</Button> : null}
-                        {!hasModel ? <Button size="small" href={fyjitUrl("/pricing")}>查看可用模型</Button> : null}
+                        {!hasToken ? (
+                            <Button size="small" href={fyjitUrl("/keys")}>
+                                创建或检查 Token
+                            </Button>
+                        ) : null}
+                        {!hasToken ? (
+                            <Button size="small" href={fyjitUrl("/console/topup")}>
+                                充值
+                            </Button>
+                        ) : null}
+                        {!hasModel ? (
+                            <Button size="small" href={fyjitUrl("/pricing")}>
+                                查看可用模型
+                            </Button>
+                        ) : null}
                     </div>
                 </div>
             }

@@ -137,12 +137,11 @@ export default function ImagePage() {
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
+    const referenceSectionRef = useRef<HTMLDivElement>(null);
 
     const imageModels = fyjitModels.filter((item) => item.capabilities.includes("image_generation"));
     const preferredModel = effectiveConfig.imageModel || effectiveConfig.model;
-    const model = imageModels.some((item) => item.id === preferredModel)
-        ? preferredModel
-        : (imageModels[0]?.id || "");
+    const model = imageModels.some((item) => item.id === preferredModel) ? preferredModel : imageModels[0]?.id || "";
     const hasImageModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation"));
     const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && (generationMode === "text" || references.length));
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
@@ -375,7 +374,8 @@ export default function ImagePage() {
             }
             setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
             setGenerationMode("edit");
-            message.success("参考图已插入生图工作台");
+            window.requestAnimationFrame(() => referenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+            message.success("已插入下方“参考图”并切换到参考图编辑模式");
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
         }
@@ -632,7 +632,7 @@ export default function ImagePage() {
                             </div>
 
                             {maxImageReferences > 0 && generationMode === "edit" ? (
-                                <div className="min-w-0">
+                                <div ref={referenceSectionRef} className="min-w-0 scroll-mt-20">
                                     <div className="mb-2 flex items-center justify-between gap-3">
                                         <span className="text-base font-semibold">参考图</span>
                                         <div className="flex gap-2">

@@ -19,7 +19,19 @@ import { buildVideoCapabilityParameters } from "@/lib/video-capability-parameter
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
-import { cancelCreativeJob, createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, fetchCreativeJobs, uploadCreativeAsset, waitForCreativeJob, type CreativeAsset, type CreativeJob, type CreativeModelCapabilityProfile } from "@/services/api/creative";
+import {
+    cancelCreativeJob,
+    createCreativeIntent,
+    createCreativeJob,
+    estimateCreativeJob,
+    fetchCreativeAsset,
+    fetchCreativeJobs,
+    uploadCreativeAsset,
+    waitForCreativeJob,
+    type CreativeAsset,
+    type CreativeJob,
+    type CreativeModelCapabilityProfile,
+} from "@/services/api/creative";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { useCreativeEstimate } from "@/hooks/use-creative-estimate";
 import { useCreativeIntentStore } from "@/stores/use-creative-intent-store";
@@ -122,12 +134,12 @@ export default function VideoPage() {
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
+    const imageReferenceSectionRef = useRef<HTMLDivElement>(null);
+    const videoReferenceSectionRef = useRef<HTMLDivElement>(null);
 
     const videoModels = fyjitModels.filter((item) => item.capabilities.includes("video_generation"));
     const preferredModel = effectiveConfig.videoModel || effectiveConfig.model;
-    const model = videoModels.some((item) => item.id === preferredModel)
-        ? preferredModel
-        : (videoModels[0]?.id || "");
+    const model = videoModels.some((item) => item.id === preferredModel) ? preferredModel : videoModels[0]?.id || "";
     const hasVideoModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("video_generation"));
     const canGenerate = Boolean(prompt.trim() && hasVideoModel && fyjitTokens.length);
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.video_generation;
@@ -417,7 +429,8 @@ export default function VideoPage() {
                 return;
             }
             setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
-            message.success("图片素材已插入视频创作台");
+            window.requestAnimationFrame(() => imageReferenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+            message.success("已作为首帧/主参考插入下方“参考图”，生成时会随任务提交");
         } else if (payload.kind === "video") {
             if (maxVideoReferences < 1) {
                 message.warning("当前视频模型不接受视频参考素材");
@@ -426,7 +439,8 @@ export default function VideoPage() {
             setVideoReferences((value) =>
                 [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, maxVideoReferences),
             );
-            message.success("视频素材已插入视频创作台");
+            window.requestAnimationFrame(() => videoReferenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+            message.success("已插入下方“参考视频”，生成时会作为运动参考提交");
         }
         setAssetPickerOpen(false);
     };
@@ -624,7 +638,7 @@ export default function VideoPage() {
                             </div>
 
                             {maxImageReferences > 0 ? (
-                                <div className="min-w-0">
+                                <div ref={imageReferenceSectionRef} className="min-w-0 scroll-mt-20">
                                     <div className="mb-2 flex items-center justify-between gap-3">
                                         <span className="text-base font-semibold">参考图</span>
                                         <div className="flex gap-2">
@@ -674,7 +688,7 @@ export default function VideoPage() {
                             ) : null}
 
                             {maxVideoReferences > 0 ? (
-                                <div className="min-w-0">
+                                <div ref={videoReferenceSectionRef} className="min-w-0 scroll-mt-20">
                                     <div className="mb-2 flex items-center justify-between gap-3">
                                         <span className="text-base font-semibold">参考视频</span>
                                         <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
@@ -892,11 +906,7 @@ export default function VideoPage() {
             <AssetPickerModal
                 open={assetPickerOpen}
                 defaultTab="my-assets"
-                acceptedTypes={[
-                    "TEXT",
-                    ...(maxImageReferences > 0 ? (["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] as const) : []),
-                    ...(maxVideoReferences > 0 ? (["VIDEO"] as const) : []),
-                ]}
+                acceptedTypes={["TEXT", ...(maxImageReferences > 0 ? (["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] as const) : []), ...(maxVideoReferences > 0 ? (["VIDEO"] as const) : [])]}
                 compatibilityHint={videoAssetCompatibilityHint(modelProfile)}
                 onInsert={(payload) => void insertPickedAsset(payload)}
                 onClose={() => setAssetPickerOpen(false)}

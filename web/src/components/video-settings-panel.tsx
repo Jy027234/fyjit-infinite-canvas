@@ -56,6 +56,7 @@ export function VideoSettingsPanel({ config, supportedParameters, profile, onCon
     const fixedControls = unsupportedVideoControls(supportedParameters);
     const profileResolutions = profile?.parameter_options?.resolution;
     const availableResolutions = profileResolutions?.length ? profileResolutions.map((value) => ({ value: normalizeVideoResolutionValue(value), label: `${normalizeVideoResolutionValue(value)}p` })) : resolutionOptions;
+    const profileExcludes480p = Boolean(profileResolutions?.length && !availableResolutions.some((item) => item.value === "480"));
     const inheritsSourceRatio = Boolean(profile?.input_modes.includes("image_to_video"));
     const availableSeconds = videoDurationOptions(profile?.video_duration);
     const durationMin = profile?.video_duration?.min || 1;
@@ -69,73 +70,92 @@ export function VideoSettingsPanel({ config, supportedParameters, profile, onCon
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
-                {supports("resolution") ? <SettingGroup title="清晰度" color={theme.node.muted}>
-                    <div className="grid grid-cols-2 gap-2.5">
-                        {availableResolutions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
-                                {item.label}
-                            </OptionPill>
-                        ))}
-                        {!profileResolutions?.length ? <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} /> : null}
+                {supports("resolution") ? (
+                    <SettingGroup title="清晰度" color={theme.node.muted}>
+                        <div className="grid grid-cols-2 gap-2.5">
+                            {availableResolutions.map((item) => (
+                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                    {item.label}
+                                </OptionPill>
+                            ))}
+                            {!profileResolutions?.length ? <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} /> : null}
+                        </div>
+                        {profileExcludes480p ? (
+                            <p className="text-xs leading-5" style={{ color: theme.node.muted }}>
+                                当前上游模型仅开放 {availableResolutions.map((item) => item.label).join(" / ")}，因此不显示 480p，避免提交不受支持的参数。
+                            </p>
+                        ) : null}
+                    </SettingGroup>
+                ) : null}
+                {supports("size") ? (
+                    <SettingGroup title="比例 / 尺寸" color={theme.node.muted}>
+                        {ratios.length ? null : (
+                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                                <DimensionInput prefix="W" value={dimensions.width} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
+                                <span className="text-lg opacity-45">↔</span>
+                                <DimensionInput prefix="H" value={dimensions.height} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
+                            </div>
+                        )}
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {(ratios.length ? ratios.map((value) => ({ value, label: value, width: ratioPreview(value).width, height: ratioPreview(value).height })) : sizeOptions).map((item) => (
+                                <button
+                                    key={item.value}
+                                    type="button"
+                                    className="flex h-[78px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
+                                    style={{ borderColor: size === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={() => onConfigChange("size", item.value)}
+                                >
+                                    <SizePreview width={item.width} height={item.height} color={theme.node.text} />
+                                    <span>{item.label}</span>
+                                    {ratios.length || item.value === "auto" ? null : <span className="text-[11px] leading-none opacity-55">{item.value}</span>}
+                                </button>
+                            ))}
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                {inheritsSourceRatio ? (
+                    <div className="rounded-xl border border-dashed px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                        画面比例自动继承首帧图片，无需手动设置宽高。
                     </div>
-                </SettingGroup> : null}
-                {supports("size") ? <SettingGroup title="比例 / 尺寸" color={theme.node.muted}>
-                    {ratios.length ? null : <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
-                    </div>}
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {(ratios.length ? ratios.map((value) => ({ value, label: value, width: ratioPreview(value).width, height: ratioPreview(value).height })) : sizeOptions).map((item) => (
-                            <button
-                                key={item.value}
-                                type="button"
-                                className="flex h-[78px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
-                                style={{ borderColor: size === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={() => onConfigChange("size", item.value)}
-                            >
-                                <SizePreview width={item.width} height={item.height} color={theme.node.text} />
-                                <span>{item.label}</span>
-                                {ratios.length || item.value === "auto" ? null : (
-                                    <span className="text-[11px] leading-none opacity-55">
-                                        {item.value}
-                                    </span>
-                                )}
-                            </button>
-                        ))}
-                    </div>
-                </SettingGroup> : null}
-                {inheritsSourceRatio ? <div className="rounded-xl border border-dashed px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>画面比例自动继承首帧图片，无需手动设置宽高。</div> : null}
-                {supports("duration") ? <SettingGroup title="秒数" color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {availableSeconds.map((value) => (
-                            <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
-                                {value}s
-                            </OptionPill>
-                        ))}
-                    </div>
-                    <NumberInput label="视频时长" value={seconds} min={durationMin} max={durationMax} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
-                </SettingGroup> : null}
-                {supports("fps") ? <SettingGroup title="帧率" color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {[24, 30, 60].map((value) => (
-                            <OptionPill key={value} selected={fps === String(value)} theme={theme} onClick={() => onConfigChange("videoFps", String(value))}>
-                                {value} FPS
-                            </OptionPill>
-                        ))}
-                        <NumberInput label="视频帧率" value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
-                    </div>
-                </SettingGroup> : null}
-                {supports("generate_audio") || supports("watermark") || supports("camera_fixed") ? <SettingGroup title="输出与镜头" color={theme.node.muted}>
-                    <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
-                        {supports("generate_audio") ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
-                        {supports("watermark") ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
-                        {supports("camera_fixed") ? <SwitchRow label="镜头固定" checked={cameraFixed} theme={theme} onChange={(checked) => onConfigChange("videoCameraFixed", String(checked))} /> : null}
-                    </div>
-                </SettingGroup> : null}
+                ) : null}
+                {supports("duration") ? (
+                    <SettingGroup title="秒数" color={theme.node.muted}>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {availableSeconds.map((value) => (
+                                <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                    {value}s
+                                </OptionPill>
+                            ))}
+                        </div>
+                        <NumberInput label="视频时长" value={seconds} min={durationMin} max={durationMax} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    </SettingGroup>
+                ) : null}
+                {supports("fps") ? (
+                    <SettingGroup title="帧率" color={theme.node.muted}>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {[24, 30, 60].map((value) => (
+                                <OptionPill key={value} selected={fps === String(value)} theme={theme} onClick={() => onConfigChange("videoFps", String(value))}>
+                                    {value} FPS
+                                </OptionPill>
+                            ))}
+                            <NumberInput label="视频帧率" value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                {supports("generate_audio") || supports("watermark") || supports("camera_fixed") ? (
+                    <SettingGroup title="输出与镜头" color={theme.node.muted}>
+                        <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
+                            {supports("generate_audio") ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
+                            {supports("watermark") ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
+                            {supports("camera_fixed") ? <SwitchRow label="镜头固定" checked={cameraFixed} theme={theme} onChange={(checked) => onConfigChange("videoCameraFixed", String(checked))} /> : null}
+                        </div>
+                    </SettingGroup>
+                ) : null}
                 <FixedControlsNotice controls={fixedControls} color={theme.node.muted} />
-                <div className="rounded-xl border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>最终输出：{resolution}p · {inheritsSourceRatio ? "比例继承首帧" : videoSizeLabel(size)} · {seconds} 秒</div>
+                <div className="rounded-xl border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                    最终输出：{resolution}p · {inheritsSourceRatio ? "比例继承首帧" : videoSizeLabel(size)} · {seconds} 秒
+                </div>
             </div>
         </ImageSettingsTheme>
     );
@@ -144,7 +164,9 @@ export function VideoSettingsPanel({ config, supportedParameters, profile, onCon
 function videoDurationOptions(profile?: CreativeModelCapabilityProfile["video_duration"]) {
     if (profile?.allowed?.length) return profile.allowed;
     if (!profile) return secondOptions;
-    return Array.from(new Set([profile.min, profile.default, Math.min(profile.max, profile.min + 3), Math.min(profile.max, profile.min + 7), profile.max])).filter((value) => value >= profile.min && value <= profile.max).sort((a, b) => a - b);
+    return Array.from(new Set([profile.min, profile.default, Math.min(profile.max, profile.min + 3), Math.min(profile.max, profile.min + 7), profile.max]))
+        .filter((value) => value >= profile.min && value <= profile.max)
+        .sort((a, b) => a - b);
 }
 
 function SeedanceVideoSettingsPanel({ config, supportedParameters, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
@@ -162,56 +184,70 @@ function SeedanceVideoSettingsPanel({ config, supportedParameters, onConfigChang
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
-                {supports("resolution") ? <SettingGroup title="分辨率" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {seedanceResolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
-                                {item.label}
-                            </OptionPill>
-                        ))}
-                    </div>
-                </SettingGroup> : null}
-                {supports("size") ? <SettingGroup title="比例" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {seedanceRatioOptions.map((item) => (
-                            <button
-                                key={item.value}
-                                type="button"
-                                className="flex h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
-                                style={{ borderColor: ratio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={() => onConfigChange("size", item.value)}
-                            >
-                                <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
-                                <span>{item.label}</span>
-                                <span className="text-[10px] leading-none opacity-55">{item.value === "adaptive" ? "adaptive" : seedancePixelLabel(resolution, item.value)}</span>
-                            </button>
-                        ))}
-                    </div>
-                </SettingGroup> : null}
-                {supports("duration") ? <SettingGroup title="时长" color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {seedanceDurationOptions.map((value) => (
-                            <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
-                                {value === -1 ? "智能" : `${value}s`}
-                            </OptionPill>
-                        ))}
-                    </div>
-                    <NumberInput label="视频时长" value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
-                </SettingGroup> : null}
-                {supports("fps") ? <SettingGroup title="帧率" color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {[24, 30, 60].map((value) => <OptionPill key={value} selected={fps === String(value)} theme={theme} onClick={() => onConfigChange("videoFps", String(value))}>{value} FPS</OptionPill>)}
-                        <NumberInput label="视频帧率" value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
-                    </div>
-                </SettingGroup> : null}
-                {supports("generate_audio") || supports("watermark") || supports("camera_fixed") ? <SettingGroup title="输出与镜头" color={theme.node.muted}>
-                    <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
-                        {supports("generate_audio") ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
-                        {supports("watermark") ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
-                        {supports("camera_fixed") ? <SwitchRow label="镜头固定" checked={cameraFixed} theme={theme} onChange={(checked) => onConfigChange("videoCameraFixed", String(checked))} /> : null}
-                    </div>
-                </SettingGroup> : null}
+                {supports("resolution") ? (
+                    <SettingGroup title="分辨率" color={theme.node.muted}>
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {seedanceResolutionOptions.map((item) => (
+                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                    {item.label}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                {supports("size") ? (
+                    <SettingGroup title="比例" color={theme.node.muted}>
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {seedanceRatioOptions.map((item) => (
+                                <button
+                                    key={item.value}
+                                    type="button"
+                                    className="flex h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
+                                    style={{ borderColor: ratio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={() => onConfigChange("size", item.value)}
+                                >
+                                    <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
+                                    <span>{item.label}</span>
+                                    <span className="text-[10px] leading-none opacity-55">{item.value === "adaptive" ? "adaptive" : seedancePixelLabel(resolution, item.value)}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                {supports("duration") ? (
+                    <SettingGroup title="时长" color={theme.node.muted}>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {seedanceDurationOptions.map((value) => (
+                                <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                    {value === -1 ? "智能" : `${value}s`}
+                                </OptionPill>
+                            ))}
+                        </div>
+                        <NumberInput label="视频时长" value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    </SettingGroup>
+                ) : null}
+                {supports("fps") ? (
+                    <SettingGroup title="帧率" color={theme.node.muted}>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {[24, 30, 60].map((value) => (
+                                <OptionPill key={value} selected={fps === String(value)} theme={theme} onClick={() => onConfigChange("videoFps", String(value))}>
+                                    {value} FPS
+                                </OptionPill>
+                            ))}
+                            <NumberInput label="视频帧率" value={fps} min={1} max={120} theme={theme} onChange={(value) => onConfigChange("videoFps", value)} />
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                {supports("generate_audio") || supports("watermark") || supports("camera_fixed") ? (
+                    <SettingGroup title="输出与镜头" color={theme.node.muted}>
+                        <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
+                            {supports("generate_audio") ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}
+                            {supports("watermark") ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}
+                            {supports("camera_fixed") ? <SwitchRow label="镜头固定" checked={cameraFixed} theme={theme} onChange={(checked) => onConfigChange("videoCameraFixed", String(checked))} /> : null}
+                        </div>
+                    </SettingGroup>
+                ) : null}
                 <FixedControlsNotice controls={fixedControls} color={theme.node.muted} />
             </div>
         </ImageSettingsTheme>
@@ -249,7 +285,14 @@ export function normalizeVideoResolutionValue(value: string) {
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button type="button" disabled={disabled} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button
+            type="button"
+            disabled={disabled}
+            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35"
+            style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={onClick}
+        >
             {children}
         </button>
     );
@@ -269,7 +312,15 @@ function SettingGroup({ title, color, children }: { title: string; color: string
 function ResolutionInput({ value, theme, onChange }: { value: string; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
         <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
-            <input aria-label="视频分辨率" type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+            <input
+                aria-label="视频分辨率"
+                type="number"
+                min={1}
+                className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                onMouseDown={(event) => event.stopPropagation()}
+            />
             <span className="grid w-7 place-items-center pr-1" style={{ color: theme.node.muted }}>
                 p
             </span>
@@ -283,13 +334,34 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
-            <input aria-label={prefix === "W" ? "视频宽度" : "视频高度"} type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
+            <input
+                aria-label={prefix === "W" ? "视频宽度" : "视频高度"}
+                type="number"
+                min={1}
+                disabled={disabled}
+                className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={value || ""}
+                onChange={(event) => onChange(Number(event.target.value) || null)}
+                onMouseDown={(event) => event.stopPropagation()}
+            />
         </label>
     );
 }
 
 function NumberInput({ label, value, min, max, theme, onChange }: { label: string; value: string; min: number; max: number; theme: CanvasTheme; onChange: (value: string) => void }) {
-    return <input aria-label={label} type="number" min={min} max={max} className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }} value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />;
+    return (
+        <input
+            aria-label={label}
+            type="number"
+            min={min}
+            max={max}
+            className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onMouseDown={(event) => event.stopPropagation()}
+        />
+    );
 }
 
 function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {
@@ -300,13 +372,10 @@ function SizePreview({ width, height, color }: { width: number; height: number; 
     return <span className="rounded-[3px] border-2" style={{ width: previewWidth, height: previewHeight, borderColor: color }} />;
 }
 
-function ratioPreview(ratio: string) {
-    if (ratio === "9:16") return { width: 9, height: 16 };
-    if (ratio === "1:1") return { width: 1, height: 1 };
-    if (ratio === "4:3") return { width: 4, height: 3 };
-    if (ratio === "3:4") return { width: 3, height: 4 };
-    if (ratio === "21:9") return { width: 21, height: 9 };
+export function ratioPreview(ratio: string) {
     if (ratio === "adaptive") return { width: 0, height: 0 };
+    const match = ratio.match(/^(\d+):(\d+)$/);
+    if (match) return { width: Number(match[1]), height: Number(match[2]) };
     return { width: 16, height: 9 };
 }
 
@@ -325,7 +394,11 @@ function SwitchRow({ label, checked, theme, onChange }: { label: string; checked
 
 function FixedControlsNotice({ controls, color }: { controls: string[]; color: string }) {
     if (!controls.length) return null;
-    return <div className="rounded-xl border border-dashed px-3 py-2 text-xs leading-5" style={{ color }}>当前模型固定或未开放：{controls.join("、")}</div>;
+    return (
+        <div className="rounded-xl border border-dashed px-3 py-2 text-xs leading-5" style={{ color }}>
+            当前模型固定或未开放：{controls.join("、")}
+        </div>
+    );
 }
 
 function readSizeDimensions(size: string) {
