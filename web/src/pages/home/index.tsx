@@ -23,7 +23,7 @@ function Highlighter({ action, color, children }: { action: "highlight" | "under
 export default function IndexPage() {
     const { message } = App.useApp();
     const navigate = useNavigate();
-    const [primaryTool] = navigationTools;
+    const primaryTool = navigationTools.find((tool) => tool.slug === "canvas")!;
     const [promptShowcase, setPromptShowcase] = useState<Prompt[]>([]);
     const [previewIndex, setPreviewIndex] = useState(0);
     const [previewOpen, setPreviewOpen] = useState(false);

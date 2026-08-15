@@ -6,14 +6,14 @@
     "description": "Same-origin authenticated contract for the FYJIT creative workbenches. Provider credentials are never accepted."
   },
   "servers": [{ "url": "/api/creative" }],
-  "x-fyjit-contract-version": "creative-v1-2026-08-04.7",
+  "x-fyjit-contract-version": "creative-v1-2026-08-15.1",
   "x-fyjit-enums": {
     "capability": ["text_generation", "image_generation", "video_generation"],
     "jobStatus": ["CREATED", "QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL_SUCCESS", "MODERATION_REJECTED", "FAILED", "CANCELLED", "EXPIRED"],
     "assetType": ["IMAGE", "VIDEO", "AUDIO", "CHARACTER", "TEXT", "CANVAS", "ARCHIVE", "REFERENCE", "KEYFRAME", "EDIT_PACK"]
   },
   "x-fyjit-model-capability-profile": {
-    "fields": ["verified", "input_modes", "supported_parameters", "max_reference_images", "max_reference_videos", "max_reference_audio", "risk_notices"],
+    "fields": ["verified", "input_modes", "supported_parameters", "parameter_options", "video_duration", "max_reference_images", "max_reference_videos", "max_reference_audio", "risk_notices"],
     "policy": "Unknown models use conservative server defaults; the browser must not infer capability from model names."
   },
   "x-fyjit-content-risk-policy": {
@@ -60,7 +60,7 @@
       },
       "post": { "operationId": "createCreativeTextAsset", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } }
     },
-    "/assets/uploads": { "post": { "operationId": "uploadCreativeAsset", "requestBody": { "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" }, "title": { "type": "string", "maxLength": 200 }, "import_key": { "type": "string", "maxLength": 160, "description": "Optional per-user idempotency key for legacy browser imports." } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "201": { "$ref": "#/components/responses/Success" } } } },
+    "/assets/uploads": { "post": { "operationId": "uploadCreativeAsset", "requestBody": { "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" }, "title": { "type": "string", "maxLength": 200 }, "import_key": { "type": "string", "maxLength": 160, "description": "Optional per-user idempotency key for legacy browser imports." }, "project_id": { "type": "string", "description": "Optional user-owned creative project." } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "201": { "$ref": "#/components/responses/Success" } } } },
     "/assets/{asset_id}": {
       "get": { "operationId": "getCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } },
       "patch": { "operationId": "updateCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } },
@@ -69,6 +69,15 @@
     "/assets/{asset_id}/content": { "get": { "operationId": "getCreativeAssetContent", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "description": "Private binary asset" } } } },
     "/assets/{asset_id}/thumbnail": { "get": { "operationId": "getCreativeAssetThumbnail", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "description": "Private generated image thumbnail" } } } },
     "/assets/{asset_id}/restore": { "post": { "operationId": "restoreCreativeAsset", "parameters": [{ "$ref": "#/components/parameters/AssetId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
+    "/projects": {
+      "get": { "operationId": "listCreativeProjects", "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "post": { "operationId": "createCreativeProject", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } }
+    },
+    "/projects/{project_id}": {
+      "get": { "operationId": "getCreativeProject", "parameters": [{ "$ref": "#/components/parameters/ProjectId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "patch": { "operationId": "updateCreativeProject", "parameters": [{ "$ref": "#/components/parameters/ProjectId" }], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "delete": { "operationId": "deleteCreativeProject", "parameters": [{ "$ref": "#/components/parameters/ProjectId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } }
+    },
     "/prompts": {
       "get": { "operationId": "listCreativePrompts", "parameters": [
         { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
@@ -107,7 +116,8 @@
     "parameters": {
       "IntentId": { "name": "intent_id", "in": "path", "required": true, "schema": { "type": "string" } },
       "JobId": { "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } },
-      "AssetId": { "name": "asset_id", "in": "path", "required": true, "schema": { "type": "string" } }
+      "AssetId": { "name": "asset_id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "ProjectId": { "name": "project_id", "in": "path", "required": true, "schema": { "type": "string" } }
     },
     "requestBodies": {
       "Json": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }

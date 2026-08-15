@@ -48,10 +48,12 @@ export type CreativeModelCapabilityProfile = {
     verified: boolean;
     input_modes: string[];
     supported_parameters: string[];
+    parameter_options?: Record<string, string[]>;
     max_reference_images: number;
     max_reference_videos: number;
     max_reference_audio: number;
     risk_notices?: string[];
+    video_duration?: { allowed?: number[]; min: number; max: number; default: number };
 };
 
 export type CreativeModel = {
@@ -127,6 +129,7 @@ export type CreativeJobStatus = CreativeJobStatusContract;
 export type CreativeJob = {
     id: number;
     job_id: string;
+    project_id?: string;
     user_id: number;
     capability: CreativeEstimateRequest["capability"];
     model: string;
@@ -154,6 +157,7 @@ export type CreativeJob = {
 };
 
 export type CreateCreativeJobRequest = CreativeEstimateRequest & {
+    project_id?: string;
     prompt: string;
     negative_prompt?: string;
     reference_asset_ids?: string[];
@@ -197,6 +201,25 @@ export type CreativeAsset = {
 
 export type CreativeAssetPage = {
     items: CreativeAsset[];
+    total: number;
+    page: number;
+    page_size: number;
+};
+
+export type CreativeProject = {
+    id: number;
+    project_id: string;
+    user_id: number;
+    title: string;
+    description?: string;
+    kind: "general" | "video" | string;
+    status: string;
+    created_at: number;
+    updated_at: number;
+};
+
+export type CreativeProjectPage = {
+    items: CreativeProject[];
     total: number;
     page: number;
     page_size: number;
@@ -292,6 +315,7 @@ export class CreativeApiError extends Error {
         message: string,
         readonly status: number,
         readonly code?: string,
+        readonly retryAfter?: number,
     ) {
         super(message);
         this.name = "CreativeApiError";
@@ -310,10 +334,15 @@ export async function creativeRequest<T>(path: string, init?: RequestInit): Prom
             ...init?.headers,
         },
     });
-    const payload = (await response.json().catch(() => null)) as { success?: boolean; data?: T; message?: string; code?: string } | T | null;
-    const errorPayload = payload && typeof payload === "object" ? (payload as { success?: boolean; message?: string; code?: string }) : null;
+    const payload = (await response.json().catch(() => null)) as { success?: boolean; data?: T; message?: string; code?: string; retry_after?: number } | T | null;
+    const errorPayload = payload && typeof payload === "object" ? (payload as { success?: boolean; message?: string; code?: string; retry_after?: number }) : null;
     if (!response.ok || errorPayload?.success === false) {
-        throw new CreativeApiError(errorPayload?.message || `Creative API 请求失败（${response.status}）`, response.status, errorPayload?.code);
+        const headerRetryAfter = Number(response.headers.get("Retry-After"));
+        const retryAfter = Number(errorPayload?.retry_after) || (Number.isFinite(headerRetryAfter) ? headerRetryAfter : undefined);
+        const message = response.status === 429
+            ? `请求过于频繁，请在 ${Math.max(1, Math.ceil(retryAfter || 60))} 秒后重试`
+            : errorPayload?.message || `Creative API 请求失败（${response.status}）`;
+        throw new CreativeApiError(message, response.status, errorPayload?.code, retryAfter);
     }
     if (payload && typeof payload === "object" && "data" in payload) return (payload as { data: T }).data;
     return payload as T;
@@ -450,15 +479,16 @@ export function fetchCreativeAsset(assetId: string, signal?: AbortSignal) {
     return creativeRequest<CreativeAsset>(`/assets/${encodeURIComponent(assetId)}`, { signal });
 }
 
-export function uploadCreativeAsset(file: Blob, title?: string, signal?: AbortSignal, importKey?: string) {
+export function uploadCreativeAsset(file: Blob, title?: string, signal?: AbortSignal, importKey?: string, projectId?: string) {
     const form = new FormData();
     form.set("file", file, file instanceof File ? file.name : "upload");
     if (title) form.set("title", title);
     if (importKey) form.set("import_key", importKey);
+    if (projectId) form.set("project_id", projectId);
     return creativeRequest<CreativeAsset>("/assets/uploads", { method: "POST", body: form, signal });
 }
 
-export function createCreativeTextAsset(input: { title: string; content: string; notes?: string; tags?: string[]; folder_id?: string }) {
+export function createCreativeTextAsset(input: { title: string; content: string; notes?: string; tags?: string[]; folder_id?: string; project_id?: string }) {
     return creativeRequest<CreativeAsset>("/assets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -466,7 +496,7 @@ export function createCreativeTextAsset(input: { title: string; content: string;
     });
 }
 
-export function updateCreativeAsset(assetId: string, updates: { title?: string; notes?: string; tags?: string[]; favorite?: boolean; folder_id?: string }) {
+export function updateCreativeAsset(assetId: string, updates: { title?: string; notes?: string; tags?: string[]; favorite?: boolean; folder_id?: string; project_id?: string }) {
     return creativeRequest<CreativeAsset>(`/assets/${encodeURIComponent(assetId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -480,6 +510,33 @@ export function deleteCreativeAsset(assetId: string) {
 
 export function restoreCreativeAsset(assetId: string) {
     return creativeRequest<CreativeAsset>(`/assets/${encodeURIComponent(assetId)}/restore`, { method: "POST" });
+}
+
+export function fetchCreativeProjects(options?: { page?: number; pageSize?: number; signal?: AbortSignal }) {
+    const search = new URLSearchParams();
+    if (options?.page) search.set("page", String(options.page));
+    if (options?.pageSize) search.set("page_size", String(options.pageSize));
+    return creativeRequest<CreativeProjectPage>(`/projects${search.size ? `?${search}` : ""}`, { signal: options?.signal });
+}
+
+export function createCreativeProject(input: { title: string; description?: string }) {
+    return creativeRequest<CreativeProject>("/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...input, kind: "general" }),
+    });
+}
+
+export function updateCreativeProject(projectId: string, updates: { title?: string; description?: string }) {
+    return creativeRequest<CreativeProject>(`/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+    });
+}
+
+export function deleteCreativeProject(projectId: string) {
+    return creativeRequest<null>(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
 }
 
 export function fetchCreativePrompts(options?: { page?: number; pageSize?: number; search?: string; category?: string; promptType?: string; tag?: string; sourceType?: string; favorite?: boolean; signal?: AbortSignal }) {

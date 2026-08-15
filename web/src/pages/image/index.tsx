@@ -22,7 +22,7 @@ import {
     VideoIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Image, Input, Modal, Segmented, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
@@ -30,6 +30,7 @@ import { CreativeEstimateSummary } from "@/components/creative-estimate-summary"
 import { CreativeReadinessNotice } from "@/components/creative-readiness-notice";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+import { ProjectPicker } from "@/components/project-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { FyjitEmptyState, FyjitSurface, FyjitTaskStatus } from "@/components/fyjit/creative-ui";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -114,6 +115,8 @@ export default function ImagePage() {
     const fyjitModels = useFyjitStore((state) => state.models);
     const fyjitTokens = useFyjitStore((state) => state.tokens);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
+    const [generationMode, setGenerationMode] = useState<"text" | "edit">("text");
+    const [projectId, setProjectId] = useState("");
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
@@ -135,9 +138,13 @@ export default function ImagePage() {
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
-    const model = effectiveConfig.imageModel || effectiveConfig.model;
+    const imageModels = fyjitModels.filter((item) => item.capabilities.includes("image_generation"));
+    const preferredModel = effectiveConfig.imageModel || effectiveConfig.model;
+    const model = imageModels.some((item) => item.id === preferredModel)
+        ? preferredModel
+        : (imageModels[0]?.id || "");
     const hasImageModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation"));
-    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length);
+    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && (generationMode === "text" || references.length));
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.image_generation;
     const maxImageReferences = modelProfile?.max_reference_images ?? 0;
@@ -146,11 +153,19 @@ export default function ImagePage() {
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
 
     useEffect(() => {
+        if (maxImageReferences < 1 && generationMode === "edit") {
+            setGenerationMode("text");
+            setReferences([]);
+        }
+    }, [generationMode, maxImageReferences]);
+
+    useEffect(() => {
         if (activeIntent?.kind !== "image") return;
         const intent = useCreativeIntentStore.getState().consumeFor("image");
         if (intent?.prompt) setPrompt(intent.prompt);
         if (intent?.negative_prompt) setNegativePrompt(intent.negative_prompt);
         if (intent?.asset_ids?.length) {
+            setGenerationMode("edit");
             const ids = intent.asset_ids;
             void Promise.all(ids.map((assetId) => fetchCreativeAsset(assetId)))
                 .then((assets) =>
@@ -194,6 +209,7 @@ export default function ImagePage() {
             }),
         );
         setReferences((value) => [...value, ...nextReferences].slice(0, maxImageReferences));
+        if (nextReferences.length) setGenerationMode("edit");
     };
 
     const addReferencesFromClipboard = async () => {
@@ -211,6 +227,7 @@ export default function ImagePage() {
                 }),
             );
             setReferences((value) => [...value, ...nextReferences].slice(0, maxImageReferences));
+            if (nextReferences.length) setGenerationMode("edit");
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -331,6 +348,7 @@ export default function ImagePage() {
         }
         const stored = await uploadImage(image.dataUrl);
         setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, maxImageReferences));
+        setGenerationMode("edit");
         message.success("已加入参考图");
     };
 
@@ -356,6 +374,8 @@ export default function ImagePage() {
                 return;
             }
             setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
+            setGenerationMode("edit");
+            message.success("参考图已插入生图工作台");
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
         }
@@ -366,6 +386,7 @@ export default function ImagePage() {
         setPrompt("");
         setNegativePrompt("");
         setReferences([]);
+        setGenerationMode("text");
         setResults([]);
         setElapsedMs(0);
         setStartedAt(0);
@@ -447,7 +468,11 @@ export default function ImagePage() {
             message.error(`参考素材最多 ${maxReferences} 个，请先移除多余素材`);
             return null;
         }
-        return { text, negativePrompt: negativePrompt.trim(), config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
+        if (generationMode === "edit" && !references.length) {
+            message.error("参考图编辑模式至少需要一张参考图");
+            return null;
+        }
+        return { text, negativePrompt: negativePrompt.trim(), config: { ...effectiveConfig, model, count: "1" }, references: generationMode === "edit" ? [...references] : [] };
     };
 
     const uploadImageReferences = (items: ReferenceImage[]) =>
@@ -456,7 +481,7 @@ export default function ImagePage() {
                 if (reference.assetId) return reference.assetId;
                 const response = await fetch(reference.dataUrl);
                 if (!response.ok) throw new Error(`参考图 ${reference.name} 读取失败`);
-                const asset = await uploadCreativeAsset(await response.blob(), reference.name);
+                const asset = await uploadCreativeAsset(await response.blob(), reference.name, undefined, undefined, projectId || undefined);
                 return asset.asset_id;
             }),
         );
@@ -464,6 +489,7 @@ export default function ImagePage() {
     const submitImageJob = async (snapshot: { text: string; negativePrompt: string; config: AiConfig; references: ReferenceImage[] }, referenceAssetIds: string[], normalizedParameters: Record<string, unknown>) => {
         const requestStartedAt = performance.now();
         const job = await createCreativeJob({
+            project_id: projectId || undefined,
             capability: "image_generation",
             model: snapshot.config.model,
             group: "auto",
@@ -578,6 +604,18 @@ export default function ImagePage() {
                         <div className="mt-6 space-y-5">
                             <CreativeReadinessNotice capabilityLabel="生图" hasModel={hasImageModel} hasToken={fyjitTokens.length > 0} />
                             <div>
+                                <div className="mb-2 text-base font-semibold">生成模式</div>
+                                <Segmented
+                                    block
+                                    value={generationMode}
+                                    options={[
+                                        { label: "文生图", value: "text" },
+                                        { label: maxImageReferences > 0 ? "参考图编辑" : "参考图编辑（当前模型不支持）", value: "edit", disabled: maxImageReferences < 1 },
+                                    ]}
+                                    onChange={(value) => setGenerationMode(value as "text" | "edit")}
+                                />
+                            </div>
+                            <div>
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">提示词</span>
                                     <div className="flex gap-2">
@@ -593,7 +631,7 @@ export default function ImagePage() {
                                 <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 
-                            {maxImageReferences > 0 ? (
+                            {maxImageReferences > 0 && generationMode === "edit" ? (
                                 <div className="min-w-0">
                                     <div className="mb-2 flex items-center justify-between gap-3">
                                         <span className="text-base font-semibold">参考图</span>
@@ -682,7 +720,7 @@ export default function ImagePage() {
                                 </div>
                                 {!parametersCollapsed ? (
                                     <div className="grid grid-cols-2 gap-4">
-                                        <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                        <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                                     </div>
                                 ) : (
                                     <button
@@ -789,11 +827,18 @@ export default function ImagePage() {
             </Drawer>
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} onSelectNegativePrompt={setNegativePrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <AssetPickerModal
+                open={assetPickerOpen}
+                defaultTab="my-assets"
+                acceptedTypes={maxImageReferences > 0 ? ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] : ["TEXT"]}
+                compatibilityHint={maxImageReferences > 0 ? `当前模型最多可使用 ${maxImageReferences} 张参考图，也可插入文本作为提示词。` : "当前模型仅支持文生图，可插入文本素材作为提示词。"}
+                onInsert={(payload) => void insertPickedAsset(payload)}
+                onClose={() => setAssetPickerOpen(false)}
+            />
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
             </Modal>
@@ -815,7 +860,21 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({
+    config,
+    model,
+    projectId,
+    onProjectChange,
+    updateConfig,
+    openConfigDialog,
+}: {
+    config: AiConfig;
+    model: string;
+    projectId: string;
+    onProjectChange: (value: string) => void;
+    updateConfig: UpdateAiConfig;
+    openConfigDialog: (shouldPromptContinue?: boolean) => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -823,6 +882,10 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
             <label className="col-span-2 block min-w-0 sm:col-span-1">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+            </label>
+            <label className="col-span-2 block min-w-0 sm:col-span-1">
+                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">所属项目（可选）</span>
+                <ProjectPicker value={projectId} onChange={onProjectChange} className="w-full" />
             </label>
             <div className="col-span-2">
                 <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />

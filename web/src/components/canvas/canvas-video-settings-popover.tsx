@@ -7,6 +7,7 @@ import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeL
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
+import { useFyjitStore } from "@/stores/use-fyjit-store";
 
 type CanvasVideoSettingsPopoverProps = {
     config: AiConfig;
@@ -21,6 +22,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+    const profile = useFyjitStore((state) => state.models.find((item) => item.id === config.model)?.capability_profiles.video_generation);
 
     useEffect(() => {
         if (!open) return;
@@ -43,7 +45,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} profile={profile} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>
@@ -65,6 +67,7 @@ function VideoSettingsPortal({
     placement,
     theme,
     config,
+    profile,
     onConfigChange,
 }: {
     buttonRect: DOMRect;
@@ -72,6 +75,7 @@ function VideoSettingsPortal({
     placement: CanvasVideoSettingsPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
+    profile?: import("@/services/api/creative").CreativeModelCapabilityProfile;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 }) {
     const width = 356;
@@ -104,7 +108,7 @@ function VideoSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+            <VideoSettingsPanel config={config} supportedParameters={profile?.supported_parameters} profile={profile} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
         </div>,
         document.body,
     );

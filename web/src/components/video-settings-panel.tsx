@@ -5,6 +5,7 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { isVideoParameterSupported, unsupportedVideoControls } from "@/lib/video-capability-parameters";
+import { type CreativeModelCapabilityProfile } from "@/services/api/creative";
 import { type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
@@ -30,19 +31,21 @@ export const videoSecondOptions = secondOptions.map((value) => String(value));
 type VideoSettingsPanelProps = {
     config: AiConfig;
     supportedParameters?: string[];
+    profile?: CreativeModelCapabilityProfile;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoFps" | "videoGenerateAudio" | "videoWatermark" | "videoCameraFixed", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, supportedParameters, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, supportedParameters, profile, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} supportedParameters={supportedParameters} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     const seconds = config.videoSeconds || "6";
-    const size = normalizeVideoSizeValue(config.size);
+    const ratios = profile?.parameter_options?.ratio || [];
+    const size = ratios.includes(config.size) ? config.size : normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
     const resolution = normalizeVideoResolutionValue(config.vquality);
     const fps = config.videoFps || "30";
@@ -51,6 +54,12 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
     const cameraFixed = boolConfig(config.videoCameraFixed, false);
     const supports = (name: string) => isVideoParameterSupported(name, supportedParameters);
     const fixedControls = unsupportedVideoControls(supportedParameters);
+    const profileResolutions = profile?.parameter_options?.resolution;
+    const availableResolutions = profileResolutions?.length ? profileResolutions.map((value) => ({ value: normalizeVideoResolutionValue(value), label: `${normalizeVideoResolutionValue(value)}p` })) : resolutionOptions;
+    const inheritsSourceRatio = Boolean(profile?.input_modes.includes("image_to_video"));
+    const availableSeconds = videoDurationOptions(profile?.video_duration);
+    const durationMin = profile?.video_duration?.min || 1;
+    const durationMax = profile?.video_duration?.max || 20;
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
         onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
@@ -61,23 +70,23 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
                 {supports("resolution") ? <SettingGroup title="清晰度" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {resolutionOptions.map((item) => (
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {availableResolutions.map((item) => (
                             <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
-                        <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} />
+                        {!profileResolutions?.length ? <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} /> : null}
                     </div>
                 </SettingGroup> : null}
                 {supports("size") ? <SettingGroup title="比例 / 尺寸" color={theme.node.muted}>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                    {ratios.length ? null : <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
                         <DimensionInput prefix="W" value={dimensions.width} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
                         <DimensionInput prefix="H" value={dimensions.height} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
-                    </div>
+                    </div>}
                     <div className="grid grid-cols-3 gap-2.5">
-                        {sizeOptions.map((item) => (
+                        {(ratios.length ? ratios.map((value) => ({ value, label: value, width: ratioPreview(value).width, height: ratioPreview(value).height })) : sizeOptions).map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -88,7 +97,7 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
                             >
                                 <SizePreview width={item.width} height={item.height} color={theme.node.text} />
                                 <span>{item.label}</span>
-                                {item.value === "auto" ? null : (
+                                {ratios.length || item.value === "auto" ? null : (
                                     <span className="text-[11px] leading-none opacity-55">
                                         {item.value}
                                     </span>
@@ -97,15 +106,16 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
                         ))}
                     </div>
                 </SettingGroup> : null}
+                {inheritsSourceRatio ? <div className="rounded-xl border border-dashed px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>画面比例自动继承首帧图片，无需手动设置宽高。</div> : null}
                 {supports("duration") ? <SettingGroup title="秒数" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {secondOptions.map((value) => (
+                    <div className="grid grid-cols-4 gap-2.5">
+                        {availableSeconds.map((value) => (
                             <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                 {value}s
                             </OptionPill>
                         ))}
-                        <NumberInput label="视频时长" value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                     </div>
+                    <NumberInput label="视频时长" value={seconds} min={durationMin} max={durationMax} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                 </SettingGroup> : null}
                 {supports("fps") ? <SettingGroup title="帧率" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
@@ -125,9 +135,16 @@ export function VideoSettingsPanel({ config, supportedParameters, onConfigChange
                     </div>
                 </SettingGroup> : null}
                 <FixedControlsNotice controls={fixedControls} color={theme.node.muted} />
+                <div className="rounded-xl border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>最终输出：{resolution}p · {inheritsSourceRatio ? "比例继承首帧" : videoSizeLabel(size)} · {seconds} 秒</div>
             </div>
         </ImageSettingsTheme>
     );
+}
+
+function videoDurationOptions(profile?: CreativeModelCapabilityProfile["video_duration"]) {
+    if (profile?.allowed?.length) return profile.allowed;
+    if (!profile) return secondOptions;
+    return Array.from(new Set([profile.min, profile.default, Math.min(profile.max, profile.min + 3), Math.min(profile.max, profile.min + 7), profile.max])).filter((value) => value >= profile.min && value <= profile.max).sort((a, b) => a - b);
 }
 
 function SeedanceVideoSettingsPanel({ config, supportedParameters, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {

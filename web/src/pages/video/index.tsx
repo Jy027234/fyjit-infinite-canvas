@@ -10,6 +10,7 @@ import { CreativeEstimateSummary } from "@/components/creative-estimate-summary"
 import { CreativeReadinessNotice } from "@/components/creative-readiness-notice";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+import { ProjectPicker } from "@/components/project-picker";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
@@ -18,7 +19,7 @@ import { buildVideoCapabilityParameters } from "@/lib/video-capability-parameter
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
-import { cancelCreativeJob, createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, fetchCreativeJobs, uploadCreativeAsset, waitForCreativeJob, type CreativeAsset, type CreativeJob } from "@/services/api/creative";
+import { cancelCreativeJob, createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, fetchCreativeJobs, uploadCreativeAsset, waitForCreativeJob, type CreativeAsset, type CreativeJob, type CreativeModelCapabilityProfile } from "@/services/api/creative";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { useCreativeEstimate } from "@/hooks/use-creative-estimate";
 import { useCreativeIntentStore } from "@/stores/use-creative-intent-store";
@@ -73,6 +74,13 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
+function videoAssetCompatibilityHint(profile?: CreativeModelCapabilityProfile) {
+    if (profile?.input_modes.includes("image_to_video")) return "当前模型为图生视频：请选择且只能选择一张首帧图片，画面比例将继承首帧。";
+    if (profile?.input_modes.includes("reference_to_video")) return `当前模型为参考图生视频：请选择 1–${profile.max_reference_images} 张参考图。`;
+    if ((profile?.max_reference_videos || 0) > 0) return `当前模型支持图片与视频参考，图片最多 ${profile?.max_reference_images || 0} 张，视频最多 ${profile?.max_reference_videos || 0} 个。`;
+    return "当前模型为文生视频，只能插入文本素材作为提示词。";
+}
+
 export default function VideoPage() {
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -93,6 +101,7 @@ export default function VideoPage() {
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [videoReferences, setVideoReferences] = useState<ReferenceVideo[]>([]);
     const [audioReferences, setAudioReferences] = useState<ReferenceAudio[]>([]);
+    const [projectId, setProjectId] = useState("");
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
@@ -114,7 +123,11 @@ export default function VideoPage() {
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
-    const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const videoModels = fyjitModels.filter((item) => item.capabilities.includes("video_generation"));
+    const preferredModel = effectiveConfig.videoModel || effectiveConfig.model;
+    const model = videoModels.some((item) => item.id === preferredModel)
+        ? preferredModel
+        : (videoModels[0]?.id || "");
     const hasVideoModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("video_generation"));
     const canGenerate = Boolean(prompt.trim() && hasVideoModel && fyjitTokens.length);
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.video_generation;
@@ -130,6 +143,22 @@ export default function VideoPage() {
         error: estimateError,
     } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
+
+    useEffect(() => {
+        if (!modelProfile) return;
+        const resolutions = modelProfile.parameter_options?.resolution || [];
+        const currentResolution = normalizeResolution(effectiveConfig.vquality);
+        if (resolutions.length && !resolutions.map(normalizeResolution).includes(currentResolution)) updateConfig("vquality", normalizeResolution(resolutions[0]));
+        const ratios = modelProfile.parameter_options?.ratio || [];
+        if (modelProfile.supported_parameters.includes("size") && ratios.length && !ratios.includes(effectiveConfig.size)) updateConfig("size", ratios[0]);
+        const duration = Number(effectiveConfig.videoSeconds);
+        const durationProfile = modelProfile.video_duration;
+        if (durationProfile) {
+            const allowed = durationProfile.allowed || [];
+            const valid = allowed.length ? allowed.includes(duration) : duration >= durationProfile.min && duration <= durationProfile.max;
+            if (!valid) updateConfig("videoSeconds", String(durationProfile.default));
+        }
+    }, [effectiveConfig.size, effectiveConfig.videoSeconds, effectiveConfig.vquality, modelProfile, updateConfig]);
 
     useEffect(() => {
         if (activeIntent?.kind !== "video") return;
@@ -266,6 +295,7 @@ export default function VideoPage() {
             const checkedEstimate = await estimateCreativeJob({ capability: "video_generation", model: snapshot.config.model, group: "auto", token: { strategy: "auto" }, parameters });
             setEstimate(checkedEstimate);
             const task = await createCreativeJob({
+                project_id: projectId || undefined,
                 capability: "video_generation",
                 model: snapshot.config.model,
                 group: "auto",
@@ -328,6 +358,14 @@ export default function VideoPage() {
             message.error("参考素材超过当前模型的服务端能力，请先移除不支持的素材");
             return null;
         }
+        if (modelProfile?.input_modes.includes("image_to_video") && references.length !== 1) {
+            message.error("当前图生视频模型必须选择且只能选择一张首帧图片");
+            return null;
+        }
+        if (modelProfile?.input_modes.includes("reference_to_video") && references.length < 1) {
+            message.error("当前参考生视频模型至少需要一张参考图片");
+            return null;
+        }
         const videoReferenceError = seedanceVideoReferenceError(videoReferences);
         if (videoReferenceError) {
             message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
@@ -374,11 +412,21 @@ export default function VideoPage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
+            if (maxImageReferences < 1) {
+                message.warning("当前视频模型不接受图片素材");
+                return;
+            }
             setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
+            message.success("图片素材已插入视频创作台");
         } else if (payload.kind === "video") {
+            if (maxVideoReferences < 1) {
+                message.warning("当前视频模型不接受视频参考素材");
+                return;
+            }
             setVideoReferences((value) =>
                 [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, maxVideoReferences),
             );
+            message.success("视频素材已插入视频创作台");
         }
         setAssetPickerOpen(false);
     };
@@ -481,7 +529,7 @@ export default function VideoPage() {
                 if (item.assetId) return item.assetId;
                 const response = await fetch(item.url);
                 if (!response.ok) throw new Error(`参考素材 ${item.name} 读取失败`);
-                const asset = await uploadCreativeAsset(await response.blob(), item.name);
+                const asset = await uploadCreativeAsset(await response.blob(), item.name, undefined, undefined, projectId || undefined);
                 return asset.asset_id;
             }),
         );
@@ -737,7 +785,7 @@ export default function VideoPage() {
                                 </div>
                                 {!parametersCollapsed ? (
                                     <div className="grid grid-cols-2 gap-4">
-                                        <GenerationSettings config={effectiveConfig} model={model} supportedParameters={modelProfile?.supported_parameters} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                        <GenerationSettings config={effectiveConfig} model={model} profile={modelProfile} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                                     </div>
                                 ) : (
                                     <button
@@ -837,11 +885,22 @@ export default function VideoPage() {
             </Drawer>
             <Drawer title="参数" placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} supportedParameters={modelProfile?.supported_parameters} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={effectiveConfig} model={model} profile={modelProfile} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} onSelectNegativePrompt={setNegativePrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <AssetPickerModal
+                open={assetPickerOpen}
+                defaultTab="my-assets"
+                acceptedTypes={[
+                    "TEXT",
+                    ...(maxImageReferences > 0 ? (["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] as const) : []),
+                    ...(maxVideoReferences > 0 ? (["VIDEO"] as const) : []),
+                ]}
+                compatibilityHint={videoAssetCompatibilityHint(modelProfile)}
+                onInsert={(payload) => void insertPickedAsset(payload)}
+                onClose={() => setAssetPickerOpen(false)}
+            />
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
             </Modal>
@@ -852,13 +911,17 @@ export default function VideoPage() {
 function GenerationSettings({
     config,
     model,
-    supportedParameters,
+    profile,
+    projectId,
+    onProjectChange,
     updateConfig,
     openConfigDialog,
 }: {
     config: AiConfig;
     model: string;
-    supportedParameters?: string[];
+    profile?: CreativeModelCapabilityProfile;
+    projectId: string;
+    onProjectChange: (value: string) => void;
     updateConfig: UpdateAiConfig;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
 }) {
@@ -870,8 +933,12 @@ function GenerationSettings({
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
+            <label className="col-span-2 block min-w-0 sm:col-span-1">
+                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">所属项目（可选）</span>
+                <ProjectPicker value={projectId} onChange={onProjectChange} className="w-full" />
+            </label>
             <div className="col-span-2">
-                <VideoSettingsPanel config={config} supportedParameters={supportedParameters} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+                <VideoSettingsPanel config={config} supportedParameters={profile?.supported_parameters} profile={profile} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
             </div>
         </>
     );

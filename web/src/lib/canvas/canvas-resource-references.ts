@@ -56,7 +56,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
         const kind = resourceKind(node);
         if (!kind) return [];
         const index = counts[kind]++;
-        const label = labelForKind(kind, index);
+        const label = semanticLabel(node, kind, index);
         return [
             {
                 id: node.id,
@@ -70,6 +70,15 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
             },
         ];
     });
+}
+
+function semanticLabel(node: CanvasNodeData, kind: CanvasResourceKind, index: number) {
+    const title = (node.title || "").toLowerCase();
+    if (kind === "image" && /人物|角色|人设|主角|character/.test(title)) return `人物参考${index + 1}`;
+    if (kind === "image" && /背景|场景|环境|background|scene/.test(title)) return `背景参考${index + 1}`;
+    if (kind === "image" && /首帧|起始|first/.test(title)) return `首帧${index + 1}`;
+    if (kind === "image" && /尾帧|结束|last/.test(title)) return `尾帧${index + 1}`;
+    return labelForKind(kind, index);
 }
 
 function labelForKind(kind: CanvasResourceKind, index: number) {

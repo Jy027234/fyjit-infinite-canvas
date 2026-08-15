@@ -71,10 +71,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 references={mentionReferences}
                 onChange={updatePrompt}
                 onSubmit={submit}
-                className="thin-scrollbar h-40 w-full cursor-text resize-none rounded-xl px-3 py-2 text-sm leading-5 outline-none"
-                style={{ background: "transparent", color: theme.node.text }}
+                className="thin-scrollbar h-40 w-full cursor-text resize-none rounded-xl px-3 py-2 pr-11 text-sm leading-5 outline-none"
+                style={{ background: "transparent", color: theme.node.text, WebkitTextFillColor: theme.node.text }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
+
+            {mentionReferences.length ? <div className="mt-1 px-1 text-[11px] opacity-60">已连接 {mentionReferences.length} 项素材，可点击 @ 或直接键入 @ 引用人物、背景及其他输入。</div> : null}
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { App, Empty, Input, Modal, Pagination, Spin, Tag } from "antd";
-import { Search } from "lucide-react";
+import { Alert, App, Button, Empty, Input, Modal, Pagination, Spin, Tag } from "antd";
+import { Check, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { fetchCreativeAssets, type CreativeAsset } from "@/services/api/creative";
@@ -13,6 +13,8 @@ export type InsertAssetPayload =
 type Props = {
     open: boolean;
     defaultTab?: string;
+    acceptedTypes?: CreativeAsset["type"][];
+    compatibilityHint?: string;
     onInsert: (payload: InsertAssetPayload) => void;
     onClose: () => void;
 };
@@ -26,7 +28,7 @@ const kindOptions = [
     { label: "角色", value: "CHARACTER" },
 ];
 
-export function AssetPickerModal({ open, onInsert, onClose }: Props) {
+export function AssetPickerModal({ open, acceptedTypes, compatibilityHint, onInsert, onClose }: Props) {
     const { message } = App.useApp();
     const [items, setItems] = useState<CreativeAsset[]>([]);
     const [total, setTotal] = useState(0);
@@ -34,6 +36,10 @@ export function AssetPickerModal({ open, onInsert, onClose }: Props) {
     const [kindFilter, setKindFilter] = useState("");
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(false);
+    const [selectedId, setSelectedId] = useState<string>();
+
+    const accepted = new Set(acceptedTypes || []);
+    const selected = items.find((asset) => asset.asset_id === selectedId);
 
     useEffect(() => {
         if (!open) return;
@@ -58,6 +64,10 @@ export function AssetPickerModal({ open, onInsert, onClose }: Props) {
         };
     }, [kindFilter, keyword, message, open, page]);
 
+    useEffect(() => {
+        if (!open) setSelectedId(undefined);
+    }, [open]);
+
     const handleInsert = (asset: CreativeAsset) => {
         const title = asset.title || "未命名素材";
         if (asset.type === "TEXT") onInsert({ kind: "text", content: asset.content || "", title, assetId: asset.asset_id });
@@ -66,8 +76,22 @@ export function AssetPickerModal({ open, onInsert, onClose }: Props) {
     };
 
     return (
-        <Modal title="选择 FYJIT 素材" open={open} onCancel={onClose} footer={null} width={900} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
+        <Modal
+            title="选择 FYJIT 素材"
+            open={open}
+            onCancel={onClose}
+            footer={[
+                <Button key="cancel" onClick={onClose}>取消</Button>,
+                <Button key="insert" type="primary" disabled={!selected || (accepted.size > 0 && !accepted.has(selected.type))} onClick={() => selected && handleInsert(selected)}>
+                    插入所选素材
+                </Button>,
+            ]}
+            width={900}
+            destroyOnHidden
+            styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}
+        >
             <div className="space-y-4">
+                {compatibilityHint ? <Alert type="info" showIcon message={compatibilityHint} /> : null}
                 <div className="flex flex-wrap items-center gap-3">
                     <Input
                         className="w-64"
@@ -104,7 +128,13 @@ export function AssetPickerModal({ open, onInsert, onClose }: Props) {
                 ) : items.length ? (
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                         {items.map((asset) => (
-                            <PickerCard key={asset.asset_id} asset={asset} onClick={() => handleInsert(asset)} />
+                            <PickerCard
+                                key={asset.asset_id}
+                                asset={asset}
+                                selected={selectedId === asset.asset_id}
+                                disabled={accepted.size > 0 && !accepted.has(asset.type)}
+                                onClick={() => setSelectedId(asset.asset_id)}
+                            />
                         ))}
                     </div>
                 ) : (
@@ -120,12 +150,21 @@ export function AssetPickerModal({ open, onInsert, onClose }: Props) {
     );
 }
 
-function PickerCard({ asset, onClick }: { asset: CreativeAsset; onClick: () => void }) {
+function PickerCard({ asset, selected, disabled, onClick }: { asset: CreativeAsset; selected: boolean; disabled: boolean; onClick: () => void }) {
     const title = asset.title || "未命名素材";
     const image = ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type) ? asset.thumbnail_path || asset.preview_path : undefined;
     const label = asset.type === "TEXT" ? "文本" : asset.type === "VIDEO" ? "视频" : asset.type === "CHARACTER" ? "角色" : "图片";
     return (
-        <button type="button" className="group relative cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900" onClick={onClick}>
+        <button
+            type="button"
+            className={cn(
+                "group relative overflow-hidden rounded-lg border bg-white text-left transition dark:bg-stone-900",
+                selected ? "border-violet-500 ring-2 ring-violet-500/25" : "border-stone-200 hover:border-stone-400 hover:shadow-md dark:border-stone-700",
+                disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer",
+            )}
+            disabled={disabled}
+            onClick={onClick}
+        >
             {image ? (
                 <img src={image} alt={title} className="aspect-[4/3] w-full object-cover" loading="lazy" />
             ) : (
@@ -135,7 +174,8 @@ function PickerCard({ asset, onClick }: { asset: CreativeAsset; onClick: () => v
                 <span className="line-clamp-1 text-xs font-medium">{title}</span>
                 <Tag className="m-0 shrink-0 text-[10px]">{label}</Tag>
             </div>
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">插入</div>
+            {selected ? <span className="pointer-events-none absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-violet-600 text-white"><Check className="size-4" /></span> : null}
+            {disabled ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/60 px-3 text-center text-xs font-medium text-white">当前模型不支持此素材类型</div> : null}
         </button>
     );
 }

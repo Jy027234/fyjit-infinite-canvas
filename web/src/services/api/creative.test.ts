@@ -3,12 +3,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
     CreativeApiError,
     createCreativeCanvas,
+    createCreativeProject,
     createCreativePrompt,
     creativeRequest,
     fetchCreativeAssets,
+    fetchCreativeProjects,
     fetchCreativePrompts,
     fetchCreativePromptRevisions,
     updateCreativeCanvas,
+    updateCreativeProject,
     uploadCreativeAsset,
 } from "./creative";
 import { CREATIVE_CONTRACT_VERSION, CREATIVE_OPERATIONS } from "./generated/creative-contract";
@@ -58,6 +61,21 @@ describe("creativeRequest", () => {
 
         await expect(creativeRequest("/models")).rejects.toMatchObject({ status: 200, code: "no_model", message: "没有可用模型" });
     });
+
+    test("exposes an actionable retry delay for creative rate limits", async () => {
+        globalThis.fetch = (async () =>
+            Response.json(
+                { success: false, code: "rate_limit_exceeded", message: "请求过于频繁，请稍后重试", retry_after: 9 },
+                { status: 429, headers: { "Retry-After": "9" } },
+            )) as unknown as typeof fetch;
+
+        await expect(creativeRequest("/estimates")).rejects.toMatchObject({
+            status: 429,
+            code: "rate_limit_exceeded",
+            retryAfter: 9,
+            message: "请求过于频繁，请在 9 秒后重试",
+        });
+    });
 });
 
 describe("Creative API contracts", () => {
@@ -67,6 +85,7 @@ describe("Creative API contracts", () => {
             createCreativeJob: { method: "POST", path: "/jobs" },
             uploadCreativeAsset: { method: "POST", path: "/assets/uploads" },
             createCreativePrompt: { method: "POST", path: "/prompts" },
+            createCreativeProject: { method: "POST", path: "/projects" },
             updateCreativeCanvas: { method: "PUT", path: "/canvases/{project_id}" },
             bindCreativeVideoReference: { method: "POST", path: "/video-projects/{project_id}/shots/{shot_id}/video-reference" },
         });
@@ -80,7 +99,7 @@ describe("Creative API contracts", () => {
         }) as unknown as typeof fetch;
 
         await fetchCreativeAssets({ page: 2, pageSize: 24, type: "IMAGE", projectId: "project-7", model: "image-v2", tag: "approved", search: "portrait", favorite: true, trash: true });
-        await uploadCreativeAsset(new Blob(["image"], { type: "image/png" }), "portrait.png", undefined, "legacy-browser-v1:image:abc");
+        await uploadCreativeAsset(new Blob(["image"], { type: "image/png" }), "portrait.png", undefined, "legacy-browser-v1:image:abc", "project-7");
 
         expect(requests[0]?.input).toBe("/api/creative/assets?page=2&page_size=24&type=IMAGE&project_id=project-7&search=portrait&favorite=true&model=image-v2&tag=approved&trash=true");
         expect(requests[1]?.init?.method).toBe("POST");
@@ -88,6 +107,27 @@ describe("Creative API contracts", () => {
         expect(uploadBody).toBeInstanceOf(FormData);
         expect(uploadBody instanceof FormData ? uploadBody.get("title") : undefined).toBe("portrait.png");
         expect(uploadBody instanceof FormData ? uploadBody.get("import_key") : undefined).toBe("legacy-browser-v1:image:abc");
+        expect(uploadBody instanceof FormData ? uploadBody.get("project_id") : undefined).toBe("project-7");
+    });
+
+    test("uses the general creative project endpoints", async () => {
+        const requests: Array<{ input: string; init?: RequestInit }> = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            requests.push({ input: String(input), init });
+            return Response.json({ data: requests.length === 2 ? { items: [], total: 0, page: 1, page_size: 100 } : { project_id: "project-1" } });
+        }) as unknown as typeof fetch;
+
+        await createCreativeProject({ title: "短片项目" });
+        await fetchCreativeProjects({ pageSize: 100 });
+        await updateCreativeProject("project/unsafe", { title: "新标题" });
+
+        expect(requests.map((request) => request.input)).toEqual([
+            "/api/creative/projects",
+            "/api/creative/projects?page_size=100",
+            "/api/creative/projects/project%2Funsafe",
+        ]);
+        expect(JSON.parse(String(requests[0]?.init?.body))).toMatchObject({ title: "短片项目", kind: "general" });
+        expect(requests[2]?.init?.method).toBe("PATCH");
     });
 
     test("encodes prompt ownership metadata filters", async () => {

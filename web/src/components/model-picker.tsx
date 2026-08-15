@@ -28,11 +28,13 @@ export function ModelPicker({ value, onChange, capability, className, fullWidth 
     }, [capability, fyjitModels, requiredCapability]);
     const labels = useMemo(() => new Map(fyjitModels.map((model) => [model.id, model.name])), [fyjitModels]);
     const recommended = useMemo(() => new Set(fyjitModels.filter((model) => !requiredCapability || model.recommended_for?.includes(requiredCapability)).map((model) => model.id)), [fyjitModels, requiredCapability]);
-    const current = value || "";
+    const configured = value || "";
+    const current = options.includes(configured) ? configured : "";
 
     useEffect(() => {
-        if (options.length && !options.includes(current)) onChange(options[0]);
-    }, [current, onChange, options]);
+        if (configured && options.length && !options.includes(configured)) onChange(options[0]);
+        else if (!configured && options.length) onChange(options[0]);
+    }, [configured, onChange, options]);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {

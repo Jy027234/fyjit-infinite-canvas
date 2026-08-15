@@ -4,7 +4,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { randomId } from "@/lib/utils";
 import { createCreativeJob, estimateCreativeJob, fetchCreativeAsset, uploadCreativeAsset, waitForCreativeJob } from "@/services/api/creative";
 
-type RequestOptions = { signal?: AbortSignal; onAssetId?: (assetId: string) => void };
+type RequestOptions = { signal?: AbortSignal; onAssetId?: (assetId: string) => void; onJobId?: (jobId: string) => void };
 type CreativeImageResult = { id: string; dataUrl: string };
 type CreativeVideoResult = { assetId?: string; url?: string; mimeType?: string; width?: number; height?: number; bytes?: number; durationMs?: number };
 type CreativeUploadedMedia = { assetId?: string; url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
@@ -27,6 +27,7 @@ async function runImageJob(config: AiConfig, prompt: string, references: Referen
     const parameters = { count: Math.max(1, Math.min(10, Number(config.count) || 1)), size: config.size, quality: config.quality, background: config.background };
     await estimateCreativeJob({ capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, parameters }, options?.signal);
     const job = await createCreativeJob({ capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
+    options?.onJobId?.(job.job_id);
     const completed = await waitForCreativeJob(job.job_id, { signal: options?.signal });
     if (completed.status !== "SUCCEEDED" && completed.status !== "PARTIAL_SUCCESS") throw new Error(completed.error || "画布生图任务失败");
     const assets = await Promise.all(completed.result_asset_ids.map((assetId) => fetchCreativeAsset(assetId, options?.signal)));
@@ -53,6 +54,7 @@ export async function requestCreativeVideoGeneration(
     const parameters = { count: 1, duration: Number(config.videoSeconds) || 6, size: config.size, resolution: config.vquality, generate_audio: config.videoGenerateAudio !== "false", watermark: config.videoWatermark === "true" };
     await estimateCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, parameters }, options?.signal);
     const job = await createCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
+    options?.onJobId?.(job.job_id);
     const completed = await waitForCreativeJob(job.job_id, { signal: options?.signal, intervalMs: 2500 });
     if (completed.status !== "SUCCEEDED") throw new Error(completed.error || "画布视频任务失败");
     const assetId = completed.result_asset_ids[0];
@@ -96,6 +98,7 @@ export async function requestCreativeText(config: AiConfig, messages: AiTextMess
     const parameters = { count: 1, max_tokens: 4096, ...(system ? { system_prompt: system } : {}) };
     await estimateCreativeJob({ capability: "text_generation", model, group: "auto", token: { strategy: "auto" }, parameters }, options?.signal);
     const job = await createCreativeJob({ capability: "text_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
+    options?.onJobId?.(job.job_id);
     const completed = await waitForCreativeJob(job.job_id, { signal: options?.signal });
     if (completed.status !== "SUCCEEDED") throw new Error(completed.error || "画布文本任务失败");
     const assetId = completed.result_asset_ids[0];

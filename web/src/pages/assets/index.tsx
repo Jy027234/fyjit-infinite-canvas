@@ -1,12 +1,24 @@
 import { Copy, Download, Filter, Grid2X2, Heart, List, PencilLine, Plus, RotateCcw, Search, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { App, Button, Card, DatePicker, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Switch, Tag, Typography } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, App, Button, Card, DatePicker, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Switch, Tag, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { FyjitEmptyState, FyjitPageHeader } from "@/components/fyjit/creative-ui";
 import { formatBytes } from "@/lib/image-utils";
-import { createCreativeTextAsset, createCreativeIntent, deleteCreativeAsset, fetchCreativeAssets, restoreCreativeAsset, updateCreativeAsset, uploadCreativeAsset, type CreativeAsset } from "@/services/api/creative";
+import {
+    createCreativeProject,
+    createCreativeTextAsset,
+    createCreativeIntent,
+    deleteCreativeAsset,
+    fetchCreativeAssets,
+    fetchCreativeProjects,
+    restoreCreativeAsset,
+    updateCreativeAsset,
+    uploadCreativeAsset,
+    type CreativeAsset,
+    type CreativeProject,
+} from "@/services/api/creative";
 
 type AssetFormValues = {
     title: string;
@@ -14,7 +26,10 @@ type AssetFormValues = {
     notes?: string;
     tags?: string[];
     folder_id?: string;
+    project_id?: string;
 };
+
+type ProjectFormValues = { title: string; description?: string };
 
 type ContinueTarget = "image" | "video" | "character" | "film";
 
@@ -34,6 +49,7 @@ export default function AssetsPage() {
     const copyText = useCopyText();
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const [form] = Form.useForm<AssetFormValues>();
+    const [projectForm] = Form.useForm<ProjectFormValues>();
     const [assets, setAssets] = useState<CreativeAsset[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
@@ -56,6 +72,19 @@ export default function AssetsPage() {
     const [editing, setEditing] = useState<CreativeAsset>();
     const [preview, setPreview] = useState<CreativeAsset>();
     const [deleting, setDeleting] = useState<CreativeAsset>();
+    const [projects, setProjects] = useState<CreativeProject[]>([]);
+    const [projectModalOpen, setProjectModalOpen] = useState(false);
+    const [projectSaving, setProjectSaving] = useState(false);
+    const projectOptions = useMemo(() => projects.map((item) => ({ label: item.title, value: item.project_id })), [projects]);
+
+    const refreshProjects = async (signal?: AbortSignal) => {
+        try {
+            const response = await fetchCreativeProjects({ pageSize: 100, signal });
+            setProjects(response.items || []);
+        } catch (error) {
+            if (!signal?.aborted) message.error(error instanceof Error ? error.message : "项目列表读取失败");
+        }
+    };
 
     const refresh = async (signal?: AbortSignal) => {
         setLoading(true);
@@ -96,14 +125,35 @@ export default function AssetsPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [createdFrom, createdTo, favoriteOnly, folderId, keyword, model, page, pageSize, projectId, sourceModule, tag, trashOnly, type]);
 
+    useEffect(() => {
+        const controller = new AbortController();
+        void refreshProjects(controller.signal);
+        return () => controller.abort();
+        // 项目列表仅在进入素材中心时读取，创建项目后会主动刷新。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const submitText = async () => {
         const values = await form.validateFields();
         try {
             if (editing) {
-                await updateCreativeAsset(editing.asset_id, { title: values.title.trim(), notes: values.notes?.trim(), tags: values.tags || [], folder_id: values.folder_id?.trim() || "" });
+                await updateCreativeAsset(editing.asset_id, {
+                    title: values.title.trim(),
+                    notes: values.notes?.trim(),
+                    tags: values.tags || [],
+                    folder_id: values.folder_id?.trim() || "",
+                    project_id: values.project_id || "",
+                });
                 message.success("素材已更新");
             } else {
-                await createCreativeTextAsset({ title: values.title.trim(), content: values.content.trim(), notes: values.notes?.trim(), tags: values.tags || [], folder_id: values.folder_id?.trim() || undefined });
+                await createCreativeTextAsset({
+                    title: values.title.trim(),
+                    content: values.content.trim(),
+                    notes: values.notes?.trim(),
+                    tags: values.tags || [],
+                    folder_id: values.folder_id?.trim() || undefined,
+                    project_id: values.project_id,
+                });
                 message.success("文本素材已保存");
             }
             setCreatingText(false);
@@ -118,7 +168,7 @@ export default function AssetsPage() {
     const uploadFiles = async (files?: FileList | null) => {
         for (const file of Array.from(files || [])) {
             try {
-                await uploadCreativeAsset(file, file.name);
+                await uploadCreativeAsset(file, file.name, undefined, undefined, projectId || undefined);
                 message.success(`${file.name} 已上传`);
             } catch (error) {
                 message.error(`${file.name}：${error instanceof Error ? error.message : "上传失败"}`);
@@ -129,7 +179,7 @@ export default function AssetsPage() {
 
     const openEdit = (asset: CreativeAsset) => {
         setEditing(asset);
-        form.setFieldsValue({ title: asset.title || "", content: asset.content || "", notes: asset.notes || "", tags: asset.tags || [], folder_id: asset.folder_id || "" });
+        form.setFieldsValue({ title: asset.title || "", content: asset.content || "", notes: asset.notes || "", tags: asset.tags || [], folder_id: asset.folder_id || "", project_id: asset.project_id || undefined });
         setCreatingText(true);
     };
 
@@ -161,6 +211,24 @@ export default function AssetsPage() {
             await refresh();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材恢复失败");
+        }
+    };
+
+    const submitProject = async () => {
+        const values = await projectForm.validateFields();
+        setProjectSaving(true);
+        try {
+            const project = await createCreativeProject({ title: values.title.trim(), description: values.description?.trim() });
+            await refreshProjects();
+            setProjectId(project.project_id);
+            setPage(1);
+            setProjectModalOpen(false);
+            projectForm.resetFields();
+            message.success("项目已创建，后续上传和新建素材会自动归入该项目");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "项目创建失败");
+        } finally {
+            setProjectSaving(false);
         }
     };
 
@@ -224,13 +292,16 @@ export default function AssetsPage() {
                     setTag(event.target.value);
                 }}
             />
-            <Input
+            <Select
+                showSearch
                 allowClear
-                value={projectId}
-                placeholder="项目 ID"
-                onChange={(event) => {
+                optionFilterProp="label"
+                value={projectId || undefined}
+                placeholder="所属项目"
+                options={projectOptions}
+                onChange={(value) => {
                     setPage(1);
-                    setProjectId(event.target.value);
+                    setProjectId(value || "");
                 }}
             />
             <Input
@@ -312,6 +383,16 @@ export default function AssetsPage() {
                             }}
                         >
                             新建文本
+                        </Button>
+                        <Button
+                            size="large"
+                            icon={<Plus className="size-4" />}
+                            onClick={() => {
+                                projectForm.resetFields();
+                                setProjectModalOpen(true);
+                            }}
+                        >
+                            新建项目
                         </Button>
                     </div>
 
@@ -403,10 +484,22 @@ export default function AssetsPage() {
                         <Input maxLength={200} />
                     </Form.Item>
                     {!editing ? (
-                        <Form.Item name="content" label="文本内容" rules={[{ required: true, message: "请输入文本内容" }]}>
-                            <Input.TextArea rows={8} maxLength={100000} />
-                        </Form.Item>
+                        <>
+                            <Alert
+                                className="mb-4"
+                                type="info"
+                                showIcon
+                                message="文本素材的用途"
+                                description="保存后可直接用于生图、视频和角色创作，系统会把文本作为提示词带入对应工作台；也可作为项目中的脚本、对白或创作说明长期复用。"
+                            />
+                            <Form.Item name="content" label="文本内容" rules={[{ required: true, message: "请输入文本内容" }]}>
+                                <Input.TextArea rows={8} maxLength={100000} />
+                            </Form.Item>
+                        </>
                     ) : null}
+                    <Form.Item name="project_id" label="所属项目" extra="可选。归入项目后，可按项目筛选并在后续生成任务中自动保存结果。">
+                        <Select allowClear showSearch optionFilterProp="label" placeholder="不归入项目" options={projectOptions} />
+                    </Form.Item>
                     <Form.Item name="tags" label="标签">
                         <Select mode="tags" tokenSeparators={[",", "，"]} maxCount={50} />
                     </Form.Item>
@@ -415,6 +508,27 @@ export default function AssetsPage() {
                     </Form.Item>
                     <Form.Item name="notes" label="备注">
                         <Input.TextArea rows={3} maxLength={4000} />
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            <Modal
+                title="新建创作项目"
+                open={projectModalOpen}
+                onCancel={() => setProjectModalOpen(false)}
+                onOk={() => void submitProject()}
+                confirmLoading={projectSaving}
+                okText="创建并选中"
+                cancelText="取消"
+                destroyOnHidden
+            >
+                <Form form={projectForm} layout="vertical" requiredMark={false} className="pt-2">
+                    <Alert className="mb-4" type="info" showIcon message="项目用于集中管理同一作品的人设、背景、脚本和生成结果。" />
+                    <Form.Item name="title" label="项目名称" rules={[{ required: true, message: "请输入项目名称" }]}>
+                        <Input maxLength={160} placeholder="例如：云海狐仙短片" />
+                    </Form.Item>
+                    <Form.Item name="description" label="项目说明">
+                        <Input.TextArea rows={3} maxLength={4000} placeholder="记录作品目标、风格或协作说明" />
                     </Form.Item>
                 </Form>
             </Modal>

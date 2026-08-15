@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Image } from "antd";
-import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
+import { AtSign, FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
@@ -125,6 +125,15 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
 
     const showPlaceholder = !value.trim();
 
+    const openMentionMenu = () => {
+        const editor = editorRef.current;
+        if (!editor || !activeReferences.length) return;
+        editor.focus();
+        placeCaretAtEnd(editor);
+        insertPlainTextAtCaret("@");
+        syncFromEditor();
+    };
+
     return (
         <div className="relative w-full">
             {showPlaceholder && placeholder ? (
@@ -139,7 +148,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 role="textbox"
                 aria-multiline="true"
                 className={`${className || ""} overflow-y-auto whitespace-pre-wrap break-words outline-none`}
-                style={{ ...style, cursor: "text" }}
+                style={{ ...style, cursor: "text", color: theme.node.text, WebkitTextFillColor: theme.node.text, caretColor: theme.node.text }}
                 onInput={() => {
                     if (!composingRef.current) syncFromEditor();
                 }}
@@ -148,6 +157,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 }}
                 onCompositionEnd={() => {
                     composingRef.current = false;
+                    syncFromEditor();
+                }}
+                onPaste={(event) => {
+                    event.preventDefault();
+                    insertPlainTextAtCaret(event.clipboardData.getData("text/plain"));
                     syncFromEditor();
                 }}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
@@ -189,12 +203,38 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 }}
                 onBlur={() => window.setTimeout(closeMention, 120)}
             />
+            {activeReferences.length ? (
+                <button
+                    type="button"
+                    className="absolute right-2 top-2 z-10 inline-flex size-7 items-center justify-center rounded-full border text-xs transition hover:opacity-75"
+                    style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }}
+                    title={`引用已连接素材（${activeReferences.length}）`}
+                    aria-label={`引用已连接素材，共 ${activeReferences.length} 项`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={openMentionMenu}
+                >
+                    <AtSign className="size-3.5" />
+                </button>
+            ) : null}
             {mention && candidates.length ? (
                 <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} />
             ) : null}
             {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
+}
+
+function insertPlainTextAtCaret(text: string) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const textNode = document.createTextNode(text);
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
 }
 
 function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect: DOMRect | null; references: CanvasResourceReference[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: CanvasResourceReference) => void }) {

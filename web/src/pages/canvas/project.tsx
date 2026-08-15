@@ -12,7 +12,7 @@ import {
     storeCreativeGeneratedAudio as storeGeneratedAudio,
     storeCreativeGeneratedVideo as storeGeneratedVideo,
 } from "@/services/canvas-creative";
-import { createCreativeTextAsset, fetchCreativeCanvasRevisions, uploadCreativeAsset, type CreativeCanvasRevision } from "@/services/api/creative";
+import { cancelCreativeJob, createCreativeTextAsset, fetchCreativeCanvasRevisions, uploadCreativeAsset, type CreativeCanvasRevision } from "@/services/api/creative";
 import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -117,6 +117,7 @@ type CanvasGenerationRequest = {
     originNodeId: string;
     runningNodeId: string;
     controller: AbortController;
+    jobIds: Set<string>;
 };
 
 const VIDEO_NODE_MAX_WIDTH = 420;
@@ -304,9 +305,17 @@ function InfiniteCanvasPage() {
 
     const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
         const previous = generationRequestsRef.current.get(targetNodeId);
-        if (previous?.controller !== controller) previous?.controller.abort();
-        generationRequestsRef.current.set(targetNodeId, { targetNodeId, originNodeId, runningNodeId: runningId, controller });
+        if (previous?.controller !== controller) {
+            previous?.controller.abort();
+            previous?.jobIds.forEach((jobId) => void cancelCreativeJob(jobId));
+        }
+        generationRequestsRef.current.set(targetNodeId, { targetNodeId, originNodeId, runningNodeId: runningId, controller, jobIds: new Set() });
         return controller;
+    }, []);
+
+    const registerGenerationJob = useCallback((targetNodeId: string, controller: AbortController, jobId: string) => {
+        const request = generationRequestsRef.current.get(targetNodeId);
+        if (request?.controller === controller) request.jobIds.add(jobId);
     }, []);
 
     const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController) => {
@@ -314,11 +323,13 @@ function InfiniteCanvasPage() {
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
-    const stopGenerationByRunningId = useCallback((runningId: string) => {
+    const stopGenerationByRunningId = useCallback(async (runningId: string) => {
         const affectedNodeIds = new Set<string>();
+        const jobIds = new Set<string>();
         generationRequestsRef.current.forEach((request) => {
             if (request.runningNodeId !== runningId) return;
             request.controller.abort();
+            request.jobIds.forEach((jobId) => jobIds.add(jobId));
             generationRequestsRef.current.delete(request.targetNodeId);
             affectedNodeIds.add(request.targetNodeId);
             affectedNodeIds.add(request.originNodeId);
@@ -326,7 +337,12 @@ function InfiniteCanvasPage() {
         setRunningNodeId((current) => (current === runningId ? null : current));
         if (!affectedNodeIds.size) return;
         setNodes((prev) => prev.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
-    }, []);
+        if (!jobIds.size) return;
+        const results = await Promise.allSettled(Array.from(jobIds, (jobId) => cancelCreativeJob(jobId)));
+        const failed = results.filter((result) => result.status === "rejected").length;
+        if (failed) message.warning(`${jobIds.size - failed} 个任务已取消，${failed} 个任务取消失败，可在生成记录中继续查看状态`);
+        else message.success("服务端生成任务已取消");
+    }, [message]);
 
     const confirmStopGeneration = useCallback(
         (nodeId: string) => {
@@ -1797,7 +1813,7 @@ function InfiniteCanvasPage() {
             setDialogNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
-                const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal }).then((items) => items[0]);
+                const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(childId, controller, jobId) }).then((items) => items[0]);
                 const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
@@ -1811,7 +1827,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, registerGenerationJob, startGenerationRequest],
     );
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
@@ -1878,7 +1894,7 @@ function InfiniteCanvasPage() {
                     prompt,
                     [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }],
                     undefined,
-                    { signal: controller.signal },
+                    { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(childId, controller, jobId) },
                 ).then((items) => items[0]);
                 const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
@@ -1892,7 +1908,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, openConfigDialog, registerGenerationJob, startGenerationRequest],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -2104,8 +2120,8 @@ function InfiniteCanvasPage() {
                             : [],
                     );
                     const image = refs.length
-                        ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal }).then((items) => items[0])
-                        : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal }).then((items) => items[0]);
+                        ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(nodeId, controller, jobId) }).then((items) => items[0])
+                        : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(nodeId, controller, jobId) }).then((items) => items[0]);
                     const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                     setNodes((prev) =>
                         prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
@@ -2252,8 +2268,8 @@ function InfiniteCanvasPage() {
                         targetIds.map(async (targetId) => {
                             try {
                                 const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(targetId, controller, jobId) }).then((items) => items[0])
+                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(targetId, controller, jobId) }).then((items) => items[0]);
                                 const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
@@ -2351,7 +2367,7 @@ function InfiniteCanvasPage() {
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
                         const video = await storeGeneratedVideo(
-                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }),
+                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(videoId, controller, jobId) }),
                         );
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                         setNodes((prev) =>
@@ -2458,6 +2474,7 @@ function InfiniteCanvasPage() {
                             },
                             {
                                 signal: controller.signal,
+                                onJobId: (jobId) => registerGenerationJob(targetNodeId, controller, jobId),
                                 onAssetId: (value) => {
                                     assetId = value;
                                 },
@@ -2504,7 +2521,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, registerGenerationJob, startGenerationRequest],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -2567,6 +2584,7 @@ function InfiniteCanvasPage() {
                         },
                         {
                             signal: controller.signal,
+                            onJobId: (jobId) => registerGenerationJob(node.id, controller, jobId),
                             onAssetId: (value) => {
                                 assetId = value;
                             },
@@ -2576,7 +2594,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
+                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(node.id, controller, jobId) }));
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) =>
                         prev.map((item) =>
@@ -2610,8 +2628,8 @@ function InfiniteCanvasPage() {
                 }
 
                 const image = useReferenceImages
-                    ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                    : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                    ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(node.id, controller, jobId) }).then((items) => items[0])
+                    : await requestGeneration(generationConfig, prompt, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(node.id, controller, jobId) }).then((items) => items[0]);
                 const uploadedImage = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
@@ -2649,7 +2667,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, registerGenerationJob, startGenerationRequest],
     );
 
     const generateImageFromTextNode = useCallback(
