@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { Switch } from "antd";
+import { Slider, Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
@@ -61,6 +61,8 @@ export function VideoSettingsPanel({ config, supportedParameters, profile, onCon
     const availableSeconds = videoDurationOptions(profile?.video_duration);
     const durationMin = profile?.video_duration?.min || 1;
     const durationMax = profile?.video_duration?.max || 20;
+    const usesContinuousDuration = Boolean(profile?.video_duration && !profile.video_duration.allowed?.length);
+    const selectedDuration = Math.min(durationMax, Math.max(durationMin, Number(seconds) || profile?.video_duration?.default || durationMin));
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
         onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
@@ -121,14 +123,34 @@ export function VideoSettingsPanel({ config, supportedParameters, profile, onCon
                 ) : null}
                 {supports("duration") ? (
                     <SettingGroup title="秒数" color={theme.node.muted}>
-                        <div className="grid grid-cols-4 gap-2.5">
-                            {availableSeconds.map((value) => (
-                                <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
-                                    {value}s
-                                </OptionPill>
-                            ))}
-                        </div>
-                        <NumberInput label="视频时长" value={seconds} min={durationMin} max={durationMax} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                        {usesContinuousDuration ? (
+                            <div className="rounded-xl border px-3 pb-2 pt-3" style={{ borderColor: theme.node.stroke }}>
+                                <Slider
+                                    min={durationMin}
+                                    max={durationMax}
+                                    step={1}
+                                    value={selectedDuration}
+                                    tooltip={{ formatter: (value) => `${value || selectedDuration} 秒` }}
+                                    marks={{ [durationMin]: `${durationMin}s`, [durationMax]: `${durationMax}s` }}
+                                    aria-label="视频时长"
+                                    onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))}
+                                />
+                                <p className="mt-1 text-center text-xs" style={{ color: theme.node.muted }}>
+                                    当前时长：{selectedDuration} 秒（可选 {durationMin}–{durationMax} 秒）
+                                </p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="grid grid-cols-4 gap-2.5">
+                                    {availableSeconds.map((value) => (
+                                        <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                            {value}s
+                                        </OptionPill>
+                                    ))}
+                                </div>
+                                <NumberInput label="视频时长" value={seconds} min={durationMin} max={durationMax} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                            </>
+                        )}
                     </SettingGroup>
                 ) : null}
                 {supports("fps") ? (

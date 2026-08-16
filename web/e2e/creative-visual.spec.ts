@@ -25,6 +25,7 @@ for (const viewport of [viewports[0], viewports[3]]) {
         await prepareCreativePage(page, viewport);
         await page.goto("/creative/video");
         await expect(page.getByRole("heading", { name: "视频创作台", exact: true })).toBeVisible();
+        await expect(page.getByText("预计 $0.1200 · 12,000 配额", { exact: true })).toBeVisible();
         await expectNoPageOverflow(page);
         await expect(page).toHaveScreenshot(`video-${viewport.name}.png`, { animations: "disabled", fullPage: true });
         await expectPrimaryGenerateActionReachable(page);

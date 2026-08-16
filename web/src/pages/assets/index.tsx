@@ -1,6 +1,6 @@
 import { Copy, Download, Filter, Grid2X2, Heart, List, PencilLine, Plus, RotateCcw, Search, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, App, Button, Card, DatePicker, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Switch, Tag, Typography } from "antd";
+import { Alert, App, AutoComplete, Button, Card, DatePicker, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Switch, Tag, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -292,18 +292,18 @@ export default function AssetsPage() {
                     setTag(event.target.value);
                 }}
             />
-            <Select
-                showSearch
+            <AutoComplete
                 allowClear
                 optionFilterProp="label"
                 value={projectId || undefined}
-                placeholder="所属项目"
                 options={projectOptions}
                 onChange={(value) => {
                     setPage(1);
                     setProjectId(value || "");
                 }}
-            />
+            >
+                <Input placeholder="项目 ID" />
+            </AutoComplete>
             <Input
                 allowClear
                 value={folderId}

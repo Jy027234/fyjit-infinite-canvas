@@ -247,6 +247,7 @@ function InfiniteCanvasPage() {
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [referenceAssetTargetNodeId, setReferenceAssetTargetNodeId] = useState<string | null>(null);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
@@ -2783,6 +2784,7 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([id]));
             setSelectedConnectionId(null);
             setDialogNodeId(id);
+            return id;
         },
         [screenToCanvas, size.height, size.width],
     );
@@ -2832,6 +2834,46 @@ function InfiniteCanvasPage() {
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
     );
 
+    const handleReferenceAssetInsert = useCallback(
+        async (payload: InsertAssetPayload) => {
+            const targetNodeId = referenceAssetTargetNodeId;
+            if (!targetNodeId) {
+                handleAssetInsert(payload);
+                return;
+            }
+            if (payload.kind !== "image") {
+                message.warning("当前提示词面板只能关联图片素材");
+                return;
+            }
+
+            try {
+                const referenceNodeId = await insertAssistantImage({
+                    id: `asset-${Date.now()}`,
+                    prompt: payload.title,
+                    dataUrl: payload.dataUrl,
+                    thumbnailUrl: payload.thumbnailUrl,
+                    storageKey: payload.storageKey,
+                    assetId: payload.assetId,
+                });
+                const configConnection = connectionsRef.current.find((connection) => connection.fromNodeId === targetNodeId && nodesRef.current.find((node) => node.id === connection.toNodeId)?.type === CanvasNodeType.Config);
+                const destinationNodeId = configConnection?.toNodeId || targetNodeId;
+                setConnections((current) =>
+                    current.some((connection) => connection.fromNodeId === referenceNodeId && connection.toNodeId === destinationNodeId) ? current : [...current, { id: nanoid(), fromNodeId: referenceNodeId, toNodeId: destinationNodeId }],
+                );
+                setSelectedNodeIds(new Set([targetNodeId]));
+                setSelectedConnectionId(null);
+                setDialogNodeId(targetNodeId);
+                message.success("已添加参考图，可在提示词中输入 @ 或点击素材标签关联");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "参考图插入失败");
+            } finally {
+                setReferenceAssetTargetNodeId(null);
+                setAssetPickerOpen(false);
+            }
+        },
+        [handleAssetInsert, insertAssistantImage, message, referenceAssetTargetNodeId],
+    );
+
     // --- 传给 CanvasNode 的回调/渲染函数统一 memo 化 ---
     // CanvasNode 是 React.memo,但只要这些 prop 每次渲染都是新引用,memo 就失效,
     // 导致点击/悬停/移动视角时全部节点跟着重渲染(markdown 尤其明显)。全部 useCallback 后,
@@ -2867,6 +2909,10 @@ function InfiniteCanvasPage() {
                     node={panelNode}
                     isRunning={runningNodeId === panelNode.id}
                     mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_REFERENCES}
+                    onAddReference={(nodeId) => {
+                        setReferenceAssetTargetNodeId(nodeId);
+                        setAssetPickerOpen(true);
+                    }}
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={handleGenerateNode}
@@ -3217,7 +3263,19 @@ function InfiniteCanvasPage() {
                     </div>
                 </Modal>
 
-                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
+                <AssetPickerModal
+                    open={assetPickerOpen}
+                    acceptedTypes={referenceAssetTargetNodeId ? ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] : undefined}
+                    compatibilityHint={referenceAssetTargetNodeId ? "所选图片将作为当前节点的参考素材，并可在提示词中通过 @图片N 关联。" : undefined}
+                    onInsert={(payload) => {
+                        if (referenceAssetTargetNodeId) void handleReferenceAssetInsert(payload);
+                        else handleAssetInsert(payload);
+                    }}
+                    onClose={() => {
+                        setReferenceAssetTargetNodeId(null);
+                        setAssetPickerOpen(false);
+                    }}
+                />
             </section>
         </main>
     );

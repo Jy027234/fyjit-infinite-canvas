@@ -11,10 +11,12 @@ import { CreativeReadinessNotice } from "@/components/creative-readiness-notice"
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { ProjectPicker } from "@/components/project-picker";
+import { ReferencePromptMentions } from "@/components/reference-prompt-mentions";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { appendReferenceMention, buildReferencePromptText } from "@/lib/image-reference-prompt";
 import { buildVideoCapabilityParameters } from "@/lib/video-capability-parameters";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -143,9 +145,14 @@ export default function VideoPage() {
     const hasVideoModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("video_generation"));
     const canGenerate = Boolean(prompt.trim() && hasVideoModel && fyjitTokens.length);
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.video_generation;
-    const maxImageReferences = modelProfile?.max_reference_images ?? 1;
+    const maxImageReferences = modelProfile?.max_reference_images ?? 0;
     const maxVideoReferences = modelProfile?.max_reference_videos ?? 0;
     const maxAudioReferences = modelProfile?.max_reference_audio ?? 0;
+    const promptReferences = [
+        ...references.map((reference, index) => ({ id: reference.id, label: seedanceReferenceLabel("image", index), title: reference.name })),
+        ...videoReferences.map((reference, index) => ({ id: reference.id, label: seedanceReferenceLabel("video", index), title: reference.name })),
+        ...audioReferences.map((reference, index) => ({ id: reference.id, label: seedanceReferenceLabel("audio", index), title: reference.name })),
+    ];
     const estimateConfig = buildVideoConfig(effectiveConfig, model);
     const estimateParameters = buildVideoCapabilityParameters(estimateConfig, modelProfile?.supported_parameters);
     const {
@@ -383,7 +390,14 @@ export default function VideoPage() {
             message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
             return null;
         }
-        return { text, negativePrompt: negativePrompt.trim(), config: buildVideoConfig(effectiveConfig, model), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
+        return {
+            text: buildReferencePromptText(text, promptReferences),
+            negativePrompt: negativePrompt.trim(),
+            config: buildVideoConfig(effectiveConfig, model),
+            references: [...references],
+            videoReferences: [...videoReferences],
+            audioReferences: [...audioReferences],
+        };
     };
 
     const retryResult = () => {
@@ -633,7 +647,8 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
+                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格；可用 @图片1 关联参考素材" />
+                                <ReferencePromptMentions references={promptReferences} onInsert={(label) => setPrompt((value) => appendReferenceMention(value, label))} />
                                 <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 

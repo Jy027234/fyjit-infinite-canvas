@@ -339,9 +339,7 @@ export async function creativeRequest<T>(path: string, init?: RequestInit): Prom
     if (!response.ok || errorPayload?.success === false) {
         const headerRetryAfter = Number(response.headers.get("Retry-After"));
         const retryAfter = Number(errorPayload?.retry_after) || (Number.isFinite(headerRetryAfter) ? headerRetryAfter : undefined);
-        const message = response.status === 429
-            ? `请求过于频繁，请在 ${Math.max(1, Math.ceil(retryAfter || 60))} 秒后重试`
-            : errorPayload?.message || `Creative API 请求失败（${response.status}）`;
+        const message = errorPayload?.message || (response.status === 429 ? `请求过于频繁，请在 ${Math.max(1, Math.ceil(retryAfter || 60))} 秒后重试` : `Creative API 请求失败（${response.status}）`);
         throw new CreativeApiError(message, response.status, errorPayload?.code, retryAfter);
     }
     if (payload && typeof payload === "object" && "data" in payload) return (payload as { data: T }).data;

@@ -31,11 +31,12 @@ import { CreativeReadinessNotice } from "@/components/creative-readiness-notice"
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { ProjectPicker } from "@/components/project-picker";
+import { ReferencePromptMentions } from "@/components/reference-prompt-mentions";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { FyjitEmptyState, FyjitSurface, FyjitTaskStatus } from "@/components/fyjit/creative-ui";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { appendReferenceMention, buildImageReferencePromptText, imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useWorkbenchLayoutStore } from "@/stores/use-workbench-layout-store";
@@ -147,6 +148,7 @@ export default function ImagePage() {
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.image_generation;
     const maxImageReferences = modelProfile?.max_reference_images ?? 0;
+    const promptReferences = references.map((reference, index) => ({ id: reference.id, label: imageReferenceLabel(index), title: reference.name }));
     const estimateParameters = { count: generationCount, size: effectiveConfig.size, quality: effectiveConfig.quality, background: effectiveConfig.background };
     const { estimate, loading: estimateLoading, error: estimateError } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
@@ -472,7 +474,13 @@ export default function ImagePage() {
             message.error("参考图编辑模式至少需要一张参考图");
             return null;
         }
-        return { text, negativePrompt: negativePrompt.trim(), config: { ...effectiveConfig, model, count: "1" }, references: generationMode === "edit" ? [...references] : [] };
+        const selectedReferences = generationMode === "edit" ? [...references] : [];
+        return {
+            text: buildImageReferencePromptText(text, selectedReferences),
+            negativePrompt: negativePrompt.trim(),
+            config: { ...effectiveConfig, model, count: "1" },
+            references: selectedReferences,
+        };
     };
 
     const uploadImageReferences = (items: ReferenceImage[]) =>
@@ -627,7 +635,8 @@ export default function ImagePage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
+                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图" />
+                                {generationMode === "edit" ? <ReferencePromptMentions references={promptReferences} onInsert={(label) => setPrompt((value) => appendReferenceMention(value, label))} /> : null}
                                 <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 

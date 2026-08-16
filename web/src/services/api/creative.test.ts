@@ -73,7 +73,7 @@ describe("creativeRequest", () => {
             status: 429,
             code: "rate_limit_exceeded",
             retryAfter: 9,
-            message: "请求过于频繁，请在 9 秒后重试",
+            message: "请求过于频繁，请稍后重试",
         });
     });
 });
