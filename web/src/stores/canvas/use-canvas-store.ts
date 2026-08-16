@@ -13,6 +13,9 @@ export type CanvasProject = {
     updatedAt: string;
     version: number;
     schemaVersion: number;
+    syncStatus: CanvasSyncStatus;
+    localRevision: number;
+    lastSavedAt?: string;
     syncError?: string;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
@@ -23,7 +26,9 @@ export type CanvasProject = {
     viewport: ViewportTransform;
 };
 
-type CanvasDocument = Omit<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "version" | "schemaVersion" | "syncError">;
+export type CanvasSyncStatus = "saved" | "dirty" | "saving" | "error";
+
+type CanvasDocument = Omit<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "version" | "schemaVersion" | "syncStatus" | "localRevision" | "lastSavedAt" | "syncError">;
 
 type CanvasStore = {
     hydrated: boolean;
@@ -31,6 +36,7 @@ type CanvasStore = {
     loadServerProjects: () => Promise<void>;
     createProject: (title?: string) => Promise<string>;
     importProject: (project: Partial<CanvasProject>) => Promise<string>;
+    saveProject: (id: string) => Promise<boolean>;
     snapshotProject: (id: string) => Promise<boolean>;
     restoreProjectRevision: (id: string, revisionId: string) => Promise<boolean>;
     openProject: (id: string) => CanvasProject | null;
@@ -43,7 +49,7 @@ type CanvasStore = {
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 export const CURRENT_CANVAS_SCHEMA_VERSION = 2;
 const saveTimers = new Map<string, number>();
-const saveChains = new Map<string, Promise<unknown>>();
+const saveChains = new Map<string, Promise<boolean>>();
 
 function emptyDocument(): CanvasDocument {
     return { nodes: [], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "lines", showImageInfo: false, viewport: initialViewport };
@@ -73,13 +79,17 @@ function migrateCanvasDocument(source: Partial<CanvasDocument> | undefined, sche
 
 function fromServer(project: CreativeCanvasProject<CanvasDocument>): CanvasProject {
     const document = migrateCanvasDocument(project.document, project.schema_version);
+    const updatedAt = new Date(project.updated_at * 1000).toISOString();
     return {
         id: project.project_id,
         title: project.title,
         createdAt: new Date(project.created_at * 1000).toISOString(),
-        updatedAt: new Date(project.updated_at * 1000).toISOString(),
+        updatedAt,
         version: project.version,
         schemaVersion: Math.min(project.schema_version || 1, CURRENT_CANVAS_SCHEMA_VERSION),
+        syncStatus: "saved",
+        localRevision: 0,
+        lastSavedAt: updatedAt,
         ...document,
     };
 }
@@ -87,7 +97,7 @@ function fromServer(project: CreativeCanvasProject<CanvasDocument>): CanvasProje
 async function migrateServerProject(project: CreativeCanvasProject<CanvasDocument>): Promise<CanvasProject> {
     const local = fromServer(project);
     if (project.schema_version > CURRENT_CANVAS_SCHEMA_VERSION) {
-        return { ...local, syncError: `该画布使用较新的格式 v${project.schema_version}，当前客户端仅支持 v${CURRENT_CANVAS_SCHEMA_VERSION}` };
+        return { ...local, syncStatus: "error", syncError: `该画布使用较新的格式 v${project.schema_version}，当前客户端仅支持 v${CURRENT_CANVAS_SCHEMA_VERSION}` };
     }
     if ((project.schema_version || 1) >= CURRENT_CANVAS_SCHEMA_VERSION) return local;
     try {
@@ -99,7 +109,7 @@ async function migrateServerProject(project: CreativeCanvasProject<CanvasDocumen
         });
         return fromServer(saved);
     } catch (error) {
-        return { ...local, syncError: error instanceof Error ? `画布格式升级失败：${error.message}` : "画布格式升级失败" };
+        return { ...local, syncStatus: "error", syncError: error instanceof Error ? `画布格式升级失败：${error.message}` : "画布格式升级失败" };
     }
 }
 
@@ -175,12 +185,7 @@ function scheduleSave(projectId: string) {
         projectId,
         window.setTimeout(() => {
             saveTimers.delete(projectId);
-            const previous = saveChains.get(projectId) || Promise.resolve();
-            const next = previous.catch(() => undefined).then(() => persistProject(projectId));
-            const tracked = next.finally(() => {
-                if (saveChains.get(projectId) === tracked) saveChains.delete(projectId);
-            });
-            saveChains.set(projectId, tracked);
+            void enqueueProjectSave(projectId);
         }, 800),
     );
 }
@@ -188,26 +193,46 @@ function scheduleSave(projectId: string) {
 async function persistProject(projectId: string) {
     const snapshot = useCanvasStore.getState().projects.find((item) => item.id === projectId);
     if (!snapshot) return false;
-    const snapshotUpdatedAt = snapshot.updatedAt;
+    const snapshotRevision = snapshot.localRevision;
+    useCanvasStore.setState((state) => ({
+        projects: state.projects.map((project) => (project.id === projectId && project.localRevision === snapshotRevision ? { ...project, syncStatus: "saving", syncError: undefined } : project)),
+    }));
     try {
         const document = await normalizeServerDocument(toDocument(snapshot));
         const saved = await updateCreativeCanvas<CanvasDocument>(projectId, { title: snapshot.title, document, schema_version: snapshot.schemaVersion, expected_version: snapshot.version });
         useCanvasStore.setState((state) => ({
             projects: state.projects.map((project) => {
                 if (project.id !== projectId) return project;
-                if (project.updatedAt !== snapshotUpdatedAt) {
+                if (project.localRevision !== snapshotRevision) {
                     window.setTimeout(() => scheduleSave(projectId), 0);
-                    return { ...project, version: saved.version, syncError: undefined };
+                    return { ...project, version: saved.version, syncStatus: "dirty", syncError: undefined };
                 }
-                return { ...fromServer(saved), syncError: undefined };
+                return fromServer(saved);
             }),
         }));
         return true;
     } catch (error) {
         const message = error instanceof Error ? error.message : "画布自动保存失败";
-        useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => (project.id === projectId ? { ...project, syncError: message } : project)) }));
+        useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => (project.id === projectId ? { ...project, syncStatus: "error", syncError: message } : project)) }));
         return false;
     }
+}
+
+function enqueueProjectSave(projectId: string, force = false) {
+    const timer = saveTimers.get(projectId);
+    if (timer) window.clearTimeout(timer);
+    saveTimers.delete(projectId);
+    const previous = saveChains.get(projectId) || Promise.resolve(true);
+    const next = previous.catch(() => false).then(() => {
+        const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+        if (!force && project?.syncStatus === "saved") return true;
+        return persistProject(projectId);
+    });
+    const tracked = next.finally(() => {
+        if (saveChains.get(projectId) === tracked) saveChains.delete(projectId);
+    });
+    saveChains.set(projectId, tracked);
+    return tracked;
 }
 
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
@@ -249,49 +274,37 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         set((state) => ({ projects: [project, ...state.projects] }));
         return project.id;
     },
-    snapshotProject: async (id) => {
-        const timer = saveTimers.get(id);
-        if (timer) window.clearTimeout(timer);
-        saveTimers.delete(id);
-        const previous = saveChains.get(id) || Promise.resolve();
-        let succeeded = false;
-        const next = previous
-            .catch(() => undefined)
-            .then(async () => {
-                succeeded = await persistProject(id);
-            });
-        saveChains.set(id, next);
-        await next;
-        if (saveChains.get(id) === next) saveChains.delete(id);
-        return succeeded;
-    },
+    saveProject: (id) => enqueueProjectSave(id),
+    snapshotProject: (id) => enqueueProjectSave(id, true),
     restoreProjectRevision: async (id, revisionId) => {
         const timer = saveTimers.get(id);
         if (timer) window.clearTimeout(timer);
         saveTimers.delete(id);
-        const previous = saveChains.get(id) || Promise.resolve();
-        let succeeded = false;
+        const previous = saveChains.get(id) || Promise.resolve(true);
         const next = previous
-            .catch(() => undefined)
+            .catch(() => false)
             .then(async () => {
                 const current = get().projects.find((project) => project.id === id);
-                if (!current) return;
+                if (!current) return false;
                 const restored = await restoreCreativeCanvasRevision<CanvasDocument>(id, revisionId, current.version);
                 const migrated = await migrateServerProject(restored);
                 set((state) => ({ projects: state.projects.map((project) => (project.id === id ? migrated : project)) }));
-                succeeded = true;
+                return true;
             });
         saveChains.set(id, next);
         try {
-            await next;
+            return await next;
         } finally {
             if (saveChains.get(id) === next) saveChains.delete(id);
         }
-        return succeeded;
     },
     openProject: (id) => get().projects.find((item) => item.id === id) || null,
     renameProject: (id, title) => {
-        set((state) => ({ projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)) }));
+        set((state) => ({
+            projects: state.projects.map((project) =>
+                project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString(), syncStatus: "dirty", localRevision: project.localRevision + 1, syncError: undefined } : project,
+            ),
+        }));
         scheduleSave(id);
     },
     deleteProjects: (ids) => {
@@ -305,7 +318,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     },
     replaceProjects: (projects) => set({ projects }),
     updateProject: (id, patch) => {
-        set((state) => ({ projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)) }));
+        set((state) => ({
+            projects: state.projects.map((project) =>
+                project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString(), syncStatus: "dirty", localRevision: project.localRevision + 1, syncError: undefined } : project,
+            ),
+        }));
         scheduleSave(id);
     },
 }));

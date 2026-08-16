@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Camera, Download, History, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, Camera, Check, CloudOff, Download, History, Home, Images, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Save, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
+import { useParams } from "react-router-dom";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import { useCanvasStore, type CanvasSyncStatus } from "@/stores/canvas/use-canvas-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
 
@@ -139,6 +141,7 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
+                    <CanvasSaveStatus />
                     <div className="hidden md:block">
                         <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                     </div>
@@ -179,6 +182,38 @@ export function CanvasTopBar({
             </Modal>
         </>
     );
+}
+
+function CanvasSaveStatus() {
+    const { id = "" } = useParams<{ id: string }>();
+    const project = useCanvasStore((state) => state.projects.find((item) => item.id === id));
+    const saveProject = useCanvasStore((state) => state.saveProject);
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const status = project?.syncStatus || "saved";
+    const config = saveStatusConfig(status);
+
+    return (
+        <Tooltip title={config.tooltip}>
+            <button
+                type="button"
+                disabled={status === "saving"}
+                onClick={() => void saveProject(id)}
+                className="flex h-8 items-center gap-1.5 px-1 text-xs transition hover:opacity-70 disabled:cursor-wait disabled:opacity-70"
+                style={{ color: status === "error" ? "#ef4444" : status === "dirty" ? "#d97706" : theme.node.muted }}
+                aria-label={config.tooltip}
+            >
+                <config.Icon className={`size-3.5 ${status === "saving" ? "animate-spin" : ""}`} />
+                <span className="hidden min-[560px]:inline">{config.label}</span>
+            </button>
+        </Tooltip>
+    );
+}
+
+function saveStatusConfig(status: CanvasSyncStatus) {
+    if (status === "dirty") return { label: "未保存", tooltip: "有修改等待保存，点击立即保存", Icon: Save };
+    if (status === "saving") return { label: "保存中", tooltip: "正在上传素材并保存到云端", Icon: LoaderCircle };
+    if (status === "error") return { label: "保存失败", tooltip: "保存失败，点击重试", Icon: CloudOff };
+    return { label: "已保存", tooltip: "已保存到云端，点击可再次确认保存", Icon: Check };
 }
 
 function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {

@@ -20,6 +20,7 @@ import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { filterCanvasNodesInViewport } from "@/lib/canvas/canvas-viewport";
+import { hasCanvasContentChanged, hasCanvasViewportChanged, type CanvasSyncSnapshot } from "@/lib/canvas/canvas-sync";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useFyjitStore } from "@/stores/use-fyjit-store";
@@ -174,6 +175,8 @@ function InfiniteCanvasPage() {
     const clipboardRef = useRef<CanvasClipboard | null>(null);
     const historyRef = useRef<{ past: CanvasHistoryEntry[]; future: CanvasHistoryEntry[] }>({ past: [], future: [] });
     const lastHistoryRef = useRef<CanvasHistoryEntry | null>(null);
+    const lastSyncedProjectRef = useRef<CanvasSyncSnapshot | null>(null);
+    const lastSyncedViewportRef = useRef<ViewportTransform | null>(null);
     const historyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const applyingHistoryRef = useRef(false);
@@ -213,6 +216,7 @@ function InfiniteCanvasPage() {
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const createProject = useCanvasStore((state) => state.createProject);
+    const saveProject = useCanvasStore((state) => state.saveProject);
     const snapshotProject = useCanvasStore((state) => state.snapshotProject);
     const restoreProjectRevision = useCanvasStore((state) => state.restoreProjectRevision);
     const openProject = useCanvasStore((state) => state.openProject);
@@ -390,6 +394,8 @@ function InfiniteCanvasPage() {
                 backgroundMode: project.backgroundMode,
                 showImageInfo: project.showImageInfo || false,
             };
+            lastSyncedProjectRef.current = lastHistoryRef.current;
+            lastSyncedViewportRef.current = project.viewport;
             setHistoryState({ canUndo: false, canRedo: false });
             setProjectLoaded(true);
         };
@@ -437,8 +443,12 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
+        const next = createHistoryEntry();
+        const previous = lastSyncedProjectRef.current;
+        if (!hasCanvasContentChanged(previous, next)) return;
+        lastSyncedProjectRef.current = next;
         updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
-    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+    }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
@@ -446,6 +456,9 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded) return;
+        const previous = lastSyncedViewportRef.current;
+        if (!hasCanvasViewportChanged(previous, viewport)) return;
+        lastSyncedViewportRef.current = viewport;
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         viewportSaveTimerRef.current = setTimeout(() => {
             updateProject(projectId, { viewport: viewportRef.current });
@@ -455,6 +468,25 @@ function InfiniteCanvasPage() {
             if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         };
     }, [projectId, projectLoaded, updateProject, viewport]);
+
+    useEffect(() => {
+        const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+            const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+            if (!project || project.syncStatus === "saved") return;
+            event.preventDefault();
+            event.returnValue = "";
+        };
+        const saveWhenHidden = () => {
+            const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+            if (document.visibilityState === "hidden" && project && project.syncStatus !== "saved") void saveProject(projectId);
+        };
+        window.addEventListener("beforeunload", warnBeforeUnload);
+        document.addEventListener("visibilitychange", saveWhenHidden);
+        return () => {
+            window.removeEventListener("beforeunload", warnBeforeUnload);
+            document.removeEventListener("visibilitychange", saveWhenHidden);
+        };
+    }, [projectId, saveProject]);
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -1017,10 +1049,33 @@ function InfiniteCanvasPage() {
         applyHistory(next);
     }, [applyHistory]);
 
-    const createAndOpenProject = useCallback(async () => {
-        const id = await createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
-        navigate(`/canvas/${id}`);
-    }, [createProject, navigate]);
+    const runAfterCurrentProjectSaved = useCallback(
+        async (action: () => void | Promise<void>) => {
+            const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+            if (!project || project.syncStatus === "saved" || (await saveProject(projectId))) {
+                await action();
+                return;
+            }
+            modal.confirm({
+                title: "画布尚未保存",
+                content: "云端保存失败，直接离开可能丢失本次修改。建议留在当前页面重试，或先导出画布副本。",
+                okText: "仍然离开",
+                cancelText: "继续编辑",
+                okButtonProps: { danger: true },
+                onOk: action,
+            });
+        },
+        [modal, projectId, saveProject],
+    );
+
+    const createAndOpenProject = useCallback(
+        () =>
+            runAfterCurrentProjectSaved(async () => {
+                const id = await createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
+                navigate(`/canvas/${id}`);
+            }),
+        [createProject, navigate, runAfterCurrentProjectSaved],
+    );
 
     const deleteCurrentProject = useCallback(() => {
         deleteProjects([projectId]);
@@ -2860,8 +2915,8 @@ function InfiniteCanvasPage() {
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
-                    onHome={() => navigate("/")}
-                    onProjects={() => navigate("/canvas")}
+                    onHome={() => void runAfterCurrentProjectSaved(() => navigate("/"))}
+                    onProjects={() => void runAfterCurrentProjectSaved(() => navigate("/canvas"))}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}
@@ -2879,9 +2934,12 @@ function InfiniteCanvasPage() {
                 {currentProject?.syncError ? (
                     <div
                         role="alert"
-                        className="absolute left-1/2 top-14 z-50 max-w-[min(90vw,680px)] -translate-x-1/2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+                        className="absolute left-1/2 top-14 z-50 flex max-w-[min(90vw,760px)] -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
                     >
-                        {currentProject.syncError}。本地编辑仍保留，请刷新查看服务器版本，或从项目菜单导出副本后再处理冲突。
+                        <span>{currentProject.syncError}。本地编辑仍保留，请重试保存；持续失败时可从项目菜单导出副本。</span>
+                        <Button size="small" type="text" className="!shrink-0" onClick={() => void saveProject(projectId)}>
+                            立即重试
+                        </Button>
                     </div>
                 ) : null}
 
