@@ -165,6 +165,31 @@ export default function VideoPage() {
     } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
     const canGenerate = Boolean(prompt.trim() && hasVideoModel && fyjitTokens.length && estimate?.available && !estimateLoading && !estimateError);
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
+    const multiReferenceVideoModel = videoModels.find((item) => {
+        const profile = item.capability_profiles.video_generation;
+        return item.id !== model && profile?.input_modes.includes("reference_to_video") && (profile?.max_reference_images || 0) > 1;
+    });
+    const multiReferenceMaxImages = multiReferenceVideoModel?.capability_profiles.video_generation?.max_reference_images || 0;
+
+    const switchToMultiReferenceVideo = (requiredCount: number) => {
+        const candidate = videoModels.find((item) => {
+            const profile = item.capability_profiles.video_generation;
+            return item.id !== model && profile?.input_modes.includes("reference_to_video") && (profile?.max_reference_images || 0) >= requiredCount;
+        });
+        const candidateProfile = candidate?.capability_profiles.video_generation;
+        if (!candidate || !candidateProfile) return 0;
+        updateConfig("videoModel", candidate.id);
+        message.info(`已切换至 ${candidate.name || candidate.id}，支持最多 ${candidateProfile.max_reference_images} 张参考图`);
+        return candidateProfile.max_reference_images;
+    };
+
+    const ensureImageReferenceCapacity = (requiredCount: number) => {
+        if (requiredCount <= maxImageReferences) return maxImageReferences;
+        const capacity = switchToMultiReferenceVideo(requiredCount);
+        if (capacity) return capacity;
+        message.warning(`当前模型最多支持 ${maxImageReferences} 张参考图，账号暂无可支持 ${requiredCount} 张的参考生视频模型`);
+        return maxImageReferences;
+    };
 
     useEffect(() => {
         if (!modelProfile) return;
@@ -190,22 +215,22 @@ export default function VideoPage() {
         if (intent?.asset_ids?.length) {
             const ids = intent.asset_ids;
             void Promise.all(ids.map((assetId) => fetchCreativeAsset(assetId)))
-                .then((assets) =>
+                .then((assets) => {
+                    const imageAssets = assets.filter((asset) => ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type));
+                    const imageReferenceLimit = ensureImageReferenceCapacity(references.length + imageAssets.length);
                     setReferences((current) =>
                         [
                             ...current,
-                            ...assets
-                                .filter((asset) => ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type))
-                                .map((asset) => ({
-                                    id: asset.asset_id,
-                                    assetId: asset.asset_id,
-                                    name: asset.title || "角色参考图",
-                                    type: asset.mime_type || "image/png",
-                                    dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
-                                })),
-                        ].slice(0, maxImageReferences),
-                    ),
-                )
+                            ...imageAssets.map((asset) => ({
+                                id: asset.asset_id,
+                                assetId: asset.asset_id,
+                                name: asset.title || "角色参考图",
+                                type: asset.mime_type || "image/png",
+                                dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+                            })),
+                        ].slice(0, imageReferenceLimit),
+                    );
+                })
                 .catch((error) => message.error(error instanceof Error ? error.message : "创作素材恢复失败"));
         }
     }, [activeIntent, message]);
@@ -224,7 +249,9 @@ export default function VideoPage() {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考资产，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, Math.max(0, maxImageReferences - references.length));
+        const imageCandidates = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes);
+        const imageReferenceLimit = ensureImageReferenceCapacity(references.length + imageCandidates.length);
+        const imageFiles = imageCandidates.slice(0, Math.max(0, imageReferenceLimit - references.length));
         const videoFiles = selectedFiles.filter((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, Math.max(0, maxVideoReferences - videoReferences.length));
         const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, Math.max(0, maxAudioReferences - audioReferences.length));
         if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning("已忽略超过 30MB 的参考图");
@@ -252,7 +279,7 @@ export default function VideoPage() {
             ),
             message.warning,
         );
-        setReferences((value) => [...value, ...nextReferences].slice(0, maxImageReferences));
+        setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
         setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, maxVideoReferences));
         setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, maxAudioReferences));
     };
@@ -284,13 +311,14 @@ export default function VideoPage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
+            const imageReferenceLimit = ensureImageReferenceCapacity(references.length + blobs.length);
             const nextReferences = await Promise.all(
-                blobs.slice(0, Math.max(0, maxImageReferences - references.length)).map(async (blob, index) => {
+                blobs.slice(0, Math.max(0, imageReferenceLimit - references.length)).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences].slice(0, maxImageReferences));
+            setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -450,13 +478,13 @@ export default function VideoPage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
-            if (maxImageReferences < 1) {
-                message.warning("当前视频模型不接受图片素材");
+            const imageReferenceLimit = ensureImageReferenceCapacity(references.length + 1);
+            if (imageReferenceLimit < references.length + 1) {
                 return;
             }
-            setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
+            setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, imageReferenceLimit));
             window.requestAnimationFrame(() => imageReferenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
-            message.success("已作为首帧/主参考插入下方“参考图”，生成时会随任务提交");
+            message.success("已插入下方“参考图”，生成时会作为 @图片N 参考素材提交");
         } else if (payload.kind === "video") {
             if (maxVideoReferences < 1) {
                 message.warning("当前视频模型不接受视频参考素材");
@@ -661,6 +689,15 @@ export default function VideoPage() {
                                 <ReferencePromptMentions references={promptReferences} onInsert={insertPromptReference} />
                                 <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
+
+                            {maxImageReferences <= 1 && multiReferenceVideoModel ? (
+                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 dark:border-violet-900/70 dark:bg-violet-950/30 dark:text-violet-100">
+                                    <span>需要同时关联人物、背景、道具等多张图片？</span>
+                                    <Button size="small" type="link" className="!h-auto !p-0" onClick={() => switchToMultiReferenceVideo(2)}>
+                                        切换为多参考图模型（最多 {multiReferenceMaxImages} 张）
+                                    </Button>
+                                </div>
+                            ) : null}
 
                             {maxImageReferences > 0 ? (
                                 <div ref={imageReferenceSectionRef} className="min-w-0 scroll-mt-20">
