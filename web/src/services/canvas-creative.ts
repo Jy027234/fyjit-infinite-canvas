@@ -3,6 +3,7 @@ import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { randomId } from "@/lib/utils";
 import { createCreativeJob, estimateCreativeJob, fetchCreativeAsset, uploadCreativeAsset, waitForCreativeJob } from "@/services/api/creative";
+import { readReferenceBlob } from "@/services/reference-storage";
 
 type RequestOptions = { signal?: AbortSignal; onAssetId?: (assetId: string) => void; onJobId?: (jobId: string) => void };
 type CreativeImageResult = { id: string; dataUrl: string };
@@ -21,7 +22,7 @@ export async function requestCreativeEdit(config: AiConfig, prompt: string, refe
 async function runImageJob(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const model = selectedModel(config, "image");
     const referenceAssetIds = await uploadReferences(
-        references.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl })),
+        references.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl, storageKey: item.storageKey })),
         options?.signal,
     );
     const parameters = { count: Math.max(1, Math.min(10, Number(config.count) || 1)), size: config.size, quality: config.quality, background: config.background };
@@ -43,17 +44,18 @@ export async function requestCreativeVideoGeneration(
     options?: RequestOptions,
 ): Promise<CreativeVideoResult> {
     const model = selectedModel(config, "video");
+    const parameters = { count: 1, duration: Number(config.videoSeconds) || 6, size: config.size, resolution: config.vquality, generate_audio: config.videoGenerateAudio !== "false", watermark: config.videoWatermark === "true" };
+    const estimate = await estimateCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, parameters }, options?.signal);
+    if (!estimate.available) throw new Error(estimate.message || "当前视频模型尚未完成计费配置");
     const referenceAssetIds = await uploadReferences(
         [
-            ...references.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl })),
-            ...videoReferences.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url })),
-            ...audioReferences.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url })),
+            ...references.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl, storageKey: item.storageKey })),
+            ...videoReferences.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url, storageKey: item.storageKey })),
+            ...audioReferences.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url, storageKey: item.storageKey })),
         ],
         options?.signal,
     );
-    const parameters = { count: 1, duration: Number(config.videoSeconds) || 6, size: config.size, resolution: config.vquality, generate_audio: config.videoGenerateAudio !== "false", watermark: config.videoWatermark === "true" };
-    await estimateCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, parameters }, options?.signal);
-    const job = await createCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
+    const job = await createCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters: estimate.normalized_parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
     options?.onJobId?.(job.job_id);
     const completed = await waitForCreativeJob(job.job_id, { signal: options?.signal, intervalMs: 2500 });
     if (completed.status !== "SUCCEEDED") throw new Error(completed.error || "画布视频任务失败");
@@ -94,7 +96,7 @@ export async function requestCreativeText(config: AiConfig, messages: AiTextMess
         .filter((item) => item.role !== "system")
         .map((item) => `${item.role}: ${textContent(item.content)}`)
         .join("\n\n");
-    const referenceAssetIds = await uploadReferences([...references.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl })), ...messageReferences], options?.signal);
+    const referenceAssetIds = await uploadReferences([...references.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl, storageKey: item.storageKey })), ...messageReferences], options?.signal);
     const parameters = { count: 1, max_tokens: 4096, ...(system ? { system_prompt: system } : {}) };
     await estimateCreativeJob({ capability: "text_generation", model, group: "auto", token: { strategy: "auto" }, parameters }, options?.signal);
     const job = await createCreativeJob({ capability: "text_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
@@ -117,15 +119,13 @@ export async function storeCreativeGeneratedAudio(_blob?: Blob, _format?: string
     throw new Error("当前 FYJIT 能力注册表尚未开放音频生成");
 }
 
-async function uploadReferences(items: Array<{ assetId?: string; name: string; url: string }>, signal?: AbortSignal) {
+async function uploadReferences(items: Array<{ assetId?: string; name: string; url: string; storageKey?: string }>, signal?: AbortSignal) {
     return Promise.all(
         items.map(async (item) => {
             if (item.assetId) return item.assetId;
             const existing = assetIdFromUrl(item.url);
             if (existing) return existing;
-            const response = await fetch(item.url, { signal });
-            if (!response.ok) throw new Error(`参考素材 ${item.name} 读取失败`);
-            const asset = await uploadCreativeAsset(await response.blob(), item.name, signal);
+            const asset = await uploadCreativeAsset(await readReferenceBlob(item, signal), item.name, signal);
             return asset.asset_id;
         }),
     );

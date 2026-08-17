@@ -12,7 +12,7 @@ import {
     storeCreativeGeneratedAudio as storeGeneratedAudio,
     storeCreativeGeneratedVideo as storeGeneratedVideo,
 } from "@/services/canvas-creative";
-import { cancelCreativeJob, createCreativeTextAsset, fetchCreativeCanvasRevisions, uploadCreativeAsset, type CreativeCanvasRevision } from "@/services/api/creative";
+import { cancelCreativeJob, createCreativeTextAsset, fetchCreativeCanvasRevisions, uploadCreativeAsset, type CreativeCanvasRevision, type CreativeModelCapabilityProfile } from "@/services/api/creative";
 import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -131,6 +131,18 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+
+function canvasVideoReferenceError(profile: CreativeModelCapabilityProfile | undefined, images: number, videos: number, audio: number) {
+    if (!profile) return "当前视频模型能力尚未加载，请稍后重试";
+    if (images > profile.max_reference_images || videos > profile.max_reference_videos || audio > profile.max_reference_audio) {
+        return `当前模型最多支持 ${profile.max_reference_images} 张参考图、${profile.max_reference_videos} 个参考视频和 ${profile.max_reference_audio} 个参考音频，请移除多余素材或切换模型`;
+    }
+    if (profile.input_modes.includes("image_to_video") && images !== 1) return "当前图生视频模型必须且只能关联一张参考图；多图人设、背景和道具请切换参考生视频模型";
+    if (profile.input_modes.includes("reference_to_video") && images < 1) return "当前参考生视频模型至少需要关联一张参考图";
+    if (profile.max_reference_images === 0 && images > 0) return "当前文生视频模型不接受参考图，请移除参考图或切换图生/参考生视频模型";
+    return "";
+}
+
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -2199,9 +2211,21 @@ function InfiniteCanvasPage() {
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
-            );
+            let generationContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>>;
+            try {
+                generationContext = await hydrateNodeGenerationContext(
+                    buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
+                );
+            } catch (error) {
+                finishGenerationRequest(nodeId, runController);
+                setRunningNodeId(null);
+                if (!isGenerationCanceled(error)) {
+                    const errorDetails = error instanceof Error ? error.message : "参考素材读取失败";
+                    message.error(errorDetails);
+                    setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                }
+                return;
+            }
             const effectivePrompt = generationContext.prompt.trim();
             if (runController.signal.aborted) {
                 finishGenerationRequest(nodeId, runController);
@@ -2213,6 +2237,18 @@ function InfiniteCanvasPage() {
                 finishGenerationRequest(nodeId, runController);
                 setRunningNodeId(null);
                 return;
+            }
+            if (mode === "video") {
+                const modelName = generationConfig.model.includes("::") ? generationConfig.model.slice(generationConfig.model.indexOf("::") + 2) : generationConfig.model;
+                const profile = fyjitModels.find((item) => item.id === modelName)?.capability_profiles.video_generation;
+                const referenceError = canvasVideoReferenceError(profile, generationContext.referenceImages.length, generationContext.referenceVideos.length, generationContext.referenceAudios.length);
+                if (referenceError) {
+                    finishGenerationRequest(nodeId, runController);
+                    setRunningNodeId(null);
+                    message.error(referenceError);
+                    setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: referenceError } } : node)));
+                    return;
+                }
             }
             let pendingChildIds: string[] = [];
             if (markSourceStatus)
@@ -2577,7 +2613,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, registerGenerationJob, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, fyjitModels, isAiConfigReady, message, openConfigDialog, registerGenerationJob, startGenerationRequest],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { appendReferenceMention, buildReferencePromptText } from "@/lib/image-reference-prompt";
+import { appendReferenceMention, buildReferencePromptText, insertReferenceMention } from "@/lib/image-reference-prompt";
 
 describe("reference prompt labels", () => {
     test("keeps the uploaded reference order while translating user-facing @ labels", () => {
@@ -15,5 +15,10 @@ describe("reference prompt labels", () => {
     test("appends a clickable mention without losing the existing prompt", () => {
         expect(appendReferenceMention("复古棚拍", "图片1")).toBe("复古棚拍 @图片1");
         expect(appendReferenceMention("", "图片1")).toBe("@图片1");
+    });
+
+    test("inserts a clickable mention at the current selection", () => {
+        expect(insertReferenceMention("把头发改成红色", "图片1", 1, 3)).toEqual({ text: "把 @图片1 改成红色", caret: 7 });
+        expect(insertReferenceMention("让的头发变成蓝色", "图片1", 1, 1)).toEqual({ text: "让 @图片1 的头发变成蓝色", caret: 7 });
     });
 });

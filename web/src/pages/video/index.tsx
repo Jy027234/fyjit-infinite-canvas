@@ -16,11 +16,12 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { appendReferenceMention, buildReferencePromptText } from "@/lib/image-reference-prompt";
+import { buildReferencePromptText } from "@/lib/image-reference-prompt";
 import { buildVideoCapabilityParameters } from "@/lib/video-capability-parameters";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
+import { readReferenceBlob } from "@/services/reference-storage";
 import {
     cancelCreativeJob,
     createCreativeIntent,
@@ -42,6 +43,7 @@ import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } f
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useWorkbenchLayoutStore } from "@/stores/use-workbench-layout-store";
 import type { ReferenceImage } from "@/types/image";
+import { useReferenceMentionInsertion } from "@/hooks/use-reference-mention-insertion";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 type GeneratedVideo = {
@@ -108,6 +110,7 @@ export default function VideoPage() {
     const setHistoryCollapsed = useWorkbenchLayoutStore((state) => state.setVideoHistoryCollapsed);
     const setParametersCollapsed = useWorkbenchLayoutStore((state) => state.setVideoParametersCollapsed);
     const [prompt, setPrompt] = useState("");
+    const { textAreaRef: promptInputRef, insertReference: insertPromptReference } = useReferenceMentionInsertion(prompt, setPrompt);
     const [negativePrompt, setNegativePrompt] = useState("");
     const activeIntent = useCreativeIntentStore((state) => state.activeIntent);
     const fyjitModels = useFyjitStore((state) => state.models);
@@ -143,7 +146,6 @@ export default function VideoPage() {
     const preferredModel = effectiveConfig.videoModel || effectiveConfig.model;
     const model = videoModels.some((item) => item.id === preferredModel) ? preferredModel : videoModels[0]?.id || "";
     const hasVideoModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("video_generation"));
-    const canGenerate = Boolean(prompt.trim() && hasVideoModel && fyjitTokens.length);
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.video_generation;
     const maxImageReferences = modelProfile?.max_reference_images ?? 0;
     const maxVideoReferences = modelProfile?.max_reference_videos ?? 0;
@@ -161,6 +163,7 @@ export default function VideoPage() {
         loading: estimateLoading,
         error: estimateError,
     } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
+    const canGenerate = Boolean(prompt.trim() && hasVideoModel && fyjitTokens.length && estimate?.available && !estimateLoading && !estimateError);
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
 
     useEffect(() => {
@@ -301,6 +304,18 @@ export default function VideoPage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "视频生成参数无效" });
             return;
         }
+        let checkedEstimate: Awaited<ReturnType<typeof estimateCreativeJob>>;
+        try {
+            const parameters = buildVideoCapabilityParameters(snapshot.config, modelProfile?.supported_parameters);
+            checkedEstimate = await estimateCreativeJob({ capability: "video_generation", model: snapshot.config.model, group: "auto", token: { strategy: "auto" }, parameters });
+            setEstimate(checkedEstimate);
+            if (!checkedEstimate.available) throw new Error(checkedEstimate.message || "当前模型尚未完成计费配置");
+        } catch (requestError) {
+            const error = requestError instanceof Error ? requestError.message : "费用与账号状态校验失败";
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error });
+            message.error(error);
+            return;
+        }
         setElapsedMs(0);
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
@@ -310,9 +325,6 @@ export default function VideoPage() {
         setStartedAt(batchStartedAt);
         try {
             const referenceAssetIds = await uploadVideoReferences(snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
-            const parameters = buildVideoCapabilityParameters(snapshot.config, modelProfile?.supported_parameters);
-            const checkedEstimate = await estimateCreativeJob({ capability: "video_generation", model: snapshot.config.model, group: "auto", token: { strategy: "auto" }, parameters });
-            setEstimate(checkedEstimate);
             const task = await createCreativeJob({
                 project_id: projectId || undefined,
                 capability: "video_generation",
@@ -548,16 +560,14 @@ export default function VideoPage() {
 
     const uploadVideoReferences = async (imageItems: ReferenceImage[], videoItems: ReferenceVideo[], audioItems: ReferenceAudio[]) => {
         const inputs = [
-            ...imageItems.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl })),
-            ...videoItems.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url })),
-            ...audioItems.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url })),
+            ...imageItems.map((item) => ({ assetId: item.assetId, name: item.name, url: item.dataUrl, storageKey: item.storageKey })),
+            ...videoItems.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url, storageKey: item.storageKey })),
+            ...audioItems.map((item) => ({ assetId: item.assetId, name: item.name, url: item.url, storageKey: item.storageKey })),
         ];
         return Promise.all(
             inputs.map(async (item) => {
                 if (item.assetId) return item.assetId;
-                const response = await fetch(item.url);
-                if (!response.ok) throw new Error(`参考素材 ${item.name} 读取失败`);
-                const asset = await uploadCreativeAsset(await response.blob(), item.name, undefined, undefined, projectId || undefined);
+                const asset = await uploadCreativeAsset(await readReferenceBlob(item), item.name, undefined, undefined, projectId || undefined);
                 return asset.asset_id;
             }),
         );
@@ -647,8 +657,8 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格；可用 @图片1 关联参考素材" />
-                                <ReferencePromptMentions references={promptReferences} onInsert={(label) => setPrompt((value) => appendReferenceMention(value, label))} />
+                                <Input.TextArea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格；可用 @图片1 关联参考素材" />
+                                <ReferencePromptMentions references={promptReferences} onInsert={insertPromptReference} />
                                 <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 

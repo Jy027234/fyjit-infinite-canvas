@@ -48,8 +48,13 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
-    const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
+    if (image.storageKey) {
+        const blob = await getImageBlob(image.storageKey);
+        if (blob) return blobToDataUrl(blob);
+    }
+    const url = image.dataUrl || image.url || "";
     if (!url || url.startsWith("data:")) return url;
+    if (url.startsWith("blob:")) throw new Error("本地参考图片已失效，请重新添加参考图");
     return blobToDataUrl(await (await fetch(url)).blob());
 }
 

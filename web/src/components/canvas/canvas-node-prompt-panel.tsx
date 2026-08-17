@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Square } from "lucide-react";
+import { ArrowUp, LoaderCircle, Plus, Square } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -69,11 +69,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onWheel={(event) => event.stopPropagation()}
         >
             {supportsReferences && onAddReference ? (
-                <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                    <span className="text-xs opacity-60">参考素材会连入当前节点，可在提示词中输入或选择 @ 关联。</span>
-                    <Button size="small" onClick={() => onAddReference(node.id)}>
-                        添加参考
+                <div className="mb-2 flex items-center gap-2 px-1">
+                    <Button type="text" size="small" icon={<Plus className="size-3.5" />} onClick={() => onAddReference(node.id)}>
+                        添加参考图
                     </Button>
+                    <span className="text-xs opacity-60">关联人设、背景或道具图片后，可在提示词中输入 @ 精确引用。</span>
                 </div>
             ) : null}
             <CanvasPromptChipInput

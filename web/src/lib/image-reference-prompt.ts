@@ -29,6 +29,17 @@ export function buildReferencePromptText(prompt: string, references: PromptRefer
 }
 
 export function appendReferenceMention(prompt: string, label: string) {
-    const current = prompt.trimEnd();
-    return current ? `${current} @${label}` : `@${label}`;
+    return insertReferenceMention(prompt, label, prompt.length, prompt.length).text;
+}
+
+export function insertReferenceMention(prompt: string, label: string, selectionStart = prompt.length, selectionEnd = selectionStart) {
+    const normalizedLabel = label.trim();
+    if (!normalizedLabel) return { text: prompt, caret: Math.max(0, Math.min(prompt.length, selectionStart)) };
+    const start = Math.max(0, Math.min(prompt.length, selectionStart));
+    const end = Math.max(start, Math.min(prompt.length, selectionEnd));
+    const mention = `@${normalizedLabel}`;
+    const leading = start > 0 && !/\s/.test(prompt[start - 1]) ? " " : "";
+    const trailing = end < prompt.length && !/\s/.test(prompt[end]) ? " " : "";
+    const inserted = `${leading}${mention}${trailing}`;
+    return { text: `${prompt.slice(0, start)}${inserted}${prompt.slice(end)}`, caret: start + inserted.length };
 }

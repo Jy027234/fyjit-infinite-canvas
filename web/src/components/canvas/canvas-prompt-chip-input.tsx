@@ -26,10 +26,10 @@ type MentionState = {
 
 type Token =
     | { type: "text"; value: string }
-    | { type: "reference"; label: string };
+    | { type: "reference"; nodeId: string; label: string };
 
-// 提示词面板专用的 contentEditable 输入框:@ 引用图片时直接内嵌真实缩略图 chip,而不是「图片1」文字。
-// 序列化时 chip → 引用 label 文本(如「图片1」),保证发给生成的 value 语义与旧 textarea 版一致。
+// 提示词面板专用的 contentEditable 输入框:@ 引用图片时直接内嵌真实缩略图 chip。
+// 序列化时保存稳定的节点引用，生成前再转换为与 reference_asset_ids 顺序一致的图片编号。
 export function CanvasPromptChipInput({ value, references, onChange, onSubmit, className, style, placeholder }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
@@ -42,10 +42,9 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const [imagePreview, setImagePreview] = useState<string | null>(null);
 
     const activeReferences = useMemo(() => references.filter((item) => item.active), [references]);
+    const referenceByNodeId = useMemo(() => new Map(activeReferences.map((item) => [item.nodeId, item])), [activeReferences]);
     const referenceByLabel = useMemo(() => new Map(activeReferences.map((item) => [item.label, item])), [activeReferences]);
-    // 长 label 优先匹配,避免「图片1」把「图片10」切坏。
-    const activeLabels = useMemo(() => Array.from(new Set(activeReferences.map((item) => item.label))).sort((a, b) => b.length - a.length), [activeReferences]);
-    const tokens = useMemo(() => parseTokens(value, activeLabels), [value, activeLabels]);
+    const tokens = useMemo(() => parseTokens(value, activeReferences), [value, activeReferences]);
 
     const candidates = useMemo(() => {
         if (!mention) return [];
@@ -65,12 +64,12 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 editor.append(document.createTextNode(token.value));
                 return;
             }
-            const reference = referenceByLabel.get(token.label);
+            const reference = referenceByNodeId.get(token.nodeId) || referenceByLabel.get(token.label);
             if (reference) editor.append(createReferenceChip(reference, theme, setImagePreview));
             else editor.append(document.createTextNode(token.label));
         });
         lastEmittedRef.current = value;
-    }, [tokens, referenceByLabel, theme, value]);
+    }, [tokens, referenceByLabel, referenceByNodeId, theme, value]);
 
     const emit = (next: string) => {
         lastEmittedRef.current = next;
@@ -315,6 +314,7 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
     wrapper.dataset.refLabel = reference.label;
+    wrapper.dataset.refNodeId = reference.nodeId;
     if (reference.kind === "image" && reference.previewUrl) {
         const image = document.createElement("img");
         image.src = reference.previewUrl;
@@ -348,8 +348,10 @@ function serializeNodes(nodes: NodeListOf<ChildNode>) {
     nodes.forEach((node) => {
         if (node.nodeType === Node.TEXT_NODE) result += node.textContent || "";
         if (!(node instanceof HTMLElement)) return;
+        const nodeId = node.dataset.refNodeId;
         const label = node.dataset.refLabel;
-        if (label) result += label;
+        if (nodeId) result += `@[node:${nodeId}]`;
+        else if (label) result += label;
         else if (node.tagName === "BR") result += "\n";
         else result += serializeNodes(node.childNodes);
     });
@@ -399,7 +401,7 @@ function adjacentReferenceNode(range: Range, key: string) {
 function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
     let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
     while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.refLabel ? current : null;
+    return current instanceof HTMLElement && (current.dataset.refNodeId || current.dataset.refLabel) ? current : null;
 }
 
 function textBeforeCaret() {
@@ -438,17 +440,22 @@ function placeCaretAtEnd(element: HTMLElement) {
     selection?.addRange(range);
 }
 
-// 按 active label(已按长度降序)把 value 文本切成「文本片段 + 命中的引用 label」。
-function parseTokens(value: string, labels: string[]): Token[] {
-    if (!labels.length) return value ? [{ type: "text", value }] : [];
+// 持久化值使用稳定的节点 ID；同时识别旧的可见 label，用户下一次编辑时会自动转为节点引用。
+function parseTokens(value: string, references: CanvasResourceReference[]): Token[] {
+    if (!references.length) return value ? [{ type: "text", value }] : [];
+    const labels = Array.from(new Set(references.map((item) => item.label))).sort((a, b) => b.length - a.length);
     const escaped = labels.map(escapeRegExp).join("|");
-    const pattern = new RegExp(`(${escaped})`, "g");
+    const pattern = new RegExp(`@\\[node:([^\\]]+)\\]${escaped ? `|(${escaped})` : ""}`, "g");
+    const byNodeId = new Map(references.map((item) => [item.nodeId, item]));
+    const byLabel = new Map(references.map((item) => [item.label, item]));
     const tokens: Token[] = [];
     let lastIndex = 0;
     for (const match of value.matchAll(pattern)) {
         if (match.index === undefined) continue;
         if (match.index > lastIndex) tokens.push({ type: "text", value: value.slice(lastIndex, match.index) });
-        tokens.push({ type: "reference", label: match[0] });
+        const reference = match[1] ? byNodeId.get(match[1]) : byLabel.get(match[2]);
+        if (reference) tokens.push({ type: "reference", nodeId: reference.nodeId, label: reference.label });
+        else tokens.push({ type: "text", value: match[0] });
         lastIndex = match.index + match[0].length;
     }
     if (lastIndex < value.length) tokens.push({ type: "text", value: value.slice(lastIndex) });

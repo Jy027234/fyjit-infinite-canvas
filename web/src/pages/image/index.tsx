@@ -36,7 +36,7 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { FyjitEmptyState, FyjitSurface, FyjitTaskStatus } from "@/components/fyjit/creative-ui";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
-import { appendReferenceMention, buildImageReferencePromptText, imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { buildImageReferencePromptText, imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useWorkbenchLayoutStore } from "@/stores/use-workbench-layout-store";
@@ -44,10 +44,12 @@ import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, fetchCreativeJobs, uploadCreativeAsset, waitForCreativeJob, type CreativeJob } from "@/services/api/creative";
 import { uploadImage } from "@/services/image-storage";
+import { readReferenceBlob } from "@/services/reference-storage";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { useCreativeIntentStore } from "@/stores/use-creative-intent-store";
 import { useFyjitStore } from "@/stores/use-fyjit-store";
 import { useCreativeEstimate } from "@/hooks/use-creative-estimate";
+import { useReferenceMentionInsertion } from "@/hooks/use-reference-mention-insertion";
 import type { ReferenceImage } from "@/types/image";
 
 type GeneratedImage = {
@@ -111,6 +113,7 @@ export default function ImagePage() {
     const setHistoryCollapsed = useWorkbenchLayoutStore((state) => state.setImageHistoryCollapsed);
     const setParametersCollapsed = useWorkbenchLayoutStore((state) => state.setImageParametersCollapsed);
     const [prompt, setPrompt] = useState("");
+    const { textAreaRef: promptInputRef, insertReference: insertPromptReference } = useReferenceMentionInsertion(prompt, setPrompt);
     const [negativePrompt, setNegativePrompt] = useState("");
     const activeIntent = useCreativeIntentStore((state) => state.activeIntent);
     const fyjitModels = useFyjitStore((state) => state.models);
@@ -144,13 +147,13 @@ export default function ImagePage() {
     const preferredModel = effectiveConfig.imageModel || effectiveConfig.model;
     const model = imageModels.some((item) => item.id === preferredModel) ? preferredModel : imageModels[0]?.id || "";
     const hasImageModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation"));
-    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && (generationMode === "text" || references.length));
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.image_generation;
     const maxImageReferences = modelProfile?.max_reference_images ?? 0;
     const promptReferences = references.map((reference, index) => ({ id: reference.id, label: imageReferenceLabel(index), title: reference.name }));
     const estimateParameters = { count: generationCount, size: effectiveConfig.size, quality: effectiveConfig.quality, background: effectiveConfig.background };
     const { estimate, loading: estimateLoading, error: estimateError } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
+    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && estimate?.available && !estimateLoading && !estimateError && (generationMode === "text" || references.length));
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
 
     useEffect(() => {
@@ -261,6 +264,23 @@ export default function ImagePage() {
             return;
         }
 
+        let checkedEstimate: Awaited<ReturnType<typeof estimateCreativeJob>>;
+        try {
+            checkedEstimate = await estimateCreativeJob({
+                capability: "image_generation",
+                model: snapshot.config.model,
+                group: "auto",
+                token: { strategy: "auto" },
+                parameters: { count: 1, size: snapshot.config.size, quality: snapshot.config.quality, background: snapshot.config.background },
+            });
+            if (!checkedEstimate.available) throw new Error(checkedEstimate.message || "当前模型尚未完成计费配置");
+        } catch (requestError) {
+            const error = requestError instanceof Error ? requestError.message : "费用与账号状态校验失败";
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: generationCount, error });
+            message.error(error);
+            return;
+        }
+
         setElapsedMs(0);
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
@@ -273,16 +293,7 @@ export default function ImagePage() {
         let successCount = 0;
         let failCount = 0;
         try {
-            const [referenceAssetIds, checkedEstimate] = await Promise.all([
-                uploadImageReferences(snapshot.references),
-                estimateCreativeJob({
-                    capability: "image_generation",
-                    model: snapshot.config.model,
-                    group: "auto",
-                    token: { strategy: "auto" },
-                    parameters: { count: 1, size: snapshot.config.size, quality: snapshot.config.quality, background: snapshot.config.background },
-                }),
-            ]);
+            const referenceAssetIds = await uploadImageReferences(snapshot.references);
             const outcomes = await Promise.all(
                 resultIds.map(async (resultId, index) => {
                     try {
@@ -487,9 +498,7 @@ export default function ImagePage() {
         Promise.all(
             items.map(async (reference) => {
                 if (reference.assetId) return reference.assetId;
-                const response = await fetch(reference.dataUrl);
-                if (!response.ok) throw new Error(`参考图 ${reference.name} 读取失败`);
-                const asset = await uploadCreativeAsset(await response.blob(), reference.name, undefined, undefined, projectId || undefined);
+                const asset = await uploadCreativeAsset(await readReferenceBlob({ name: reference.name, url: reference.dataUrl, storageKey: reference.storageKey }), reference.name, undefined, undefined, projectId || undefined);
                 return asset.asset_id;
             }),
         );
@@ -533,25 +542,26 @@ export default function ImagePage() {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
         setPreviewLog(null);
-        setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
         try {
-            const [referenceAssetIds, checkedEstimate] = await Promise.all([
-                uploadImageReferences(snapshot.references),
-                estimateCreativeJob({
-                    capability: "image_generation",
-                    model: snapshot.config.model,
-                    group: "auto",
-                    token: { strategy: "auto" },
-                    parameters: { count: 1, size: snapshot.config.size, quality: snapshot.config.quality, background: snapshot.config.background },
-                }),
-            ]);
+            const checkedEstimate = await estimateCreativeJob({
+                capability: "image_generation",
+                model: snapshot.config.model,
+                group: "auto",
+                token: { strategy: "auto" },
+                parameters: { count: 1, size: snapshot.config.size, quality: snapshot.config.quality, background: snapshot.config.background },
+            });
+            if (!checkedEstimate.available) throw new Error(checkedEstimate.message || "当前模型尚未完成计费配置");
+            const referenceAssetIds = await uploadImageReferences(snapshot.references);
+            setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
             const image = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters);
             if (!image) throw new Error("任务没有返回图片素材");
             setResults((value) => updateResultAt(value, index, { status: "success", image }));
             await refreshLogs();
             message.success("重试成功");
-        } catch {
-            // submitImageJob 已经返回用户可见错误。
+        } catch (requestError) {
+            const error = requestError instanceof Error ? requestError.message : "重试失败";
+            setResults((value) => updateResultAt(value, index, { status: "failed", error, image: undefined }));
+            message.error(error);
         }
     };
 
@@ -635,8 +645,8 @@ export default function ImagePage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图" />
-                                {generationMode === "edit" ? <ReferencePromptMentions references={promptReferences} onInsert={(label) => setPrompt((value) => appendReferenceMention(value, label))} /> : null}
+                                <Input.TextArea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图" />
+                                {generationMode === "edit" ? <ReferencePromptMentions references={promptReferences} onInsert={insertPromptReference} /> : null}
                                 <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 
