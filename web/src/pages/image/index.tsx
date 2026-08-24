@@ -55,6 +55,7 @@ import type { ReferenceImage } from "@/types/image";
 type GeneratedImage = {
     id: string;
     dataUrl: string;
+    thumbnailUrl?: string;
     storageKey?: string;
     durationMs: number;
     width: number;
@@ -150,18 +151,30 @@ export default function ImagePage() {
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.image_generation;
     const maxImageReferences = modelProfile?.max_reference_images ?? 0;
+    const inputModes = modelProfile?.input_modes || [];
+    const supportsTextGeneration = !inputModes.length || inputModes.includes("text_to_image");
+    const supportsImageEditing = maxImageReferences > 0 && (!inputModes.length || inputModes.includes("image_edit"));
     const promptReferences = references.map((reference, index) => ({ id: reference.id, label: imageReferenceLabel(index), title: reference.name }));
     const estimateParameters = { count: generationCount, size: effectiveConfig.size, quality: effectiveConfig.quality, background: effectiveConfig.background };
     const { estimate, loading: estimateLoading, error: estimateError } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
-    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && estimate?.available && !estimateLoading && !estimateError && (generationMode === "text" || references.length));
+    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && estimate?.available && !estimateLoading && !estimateError && ((generationMode === "text" && supportsTextGeneration) || (generationMode === "edit" && supportsImageEditing && references.length)));
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
 
     useEffect(() => {
-        if (maxImageReferences < 1 && generationMode === "edit") {
+        if (!supportsImageEditing && generationMode === "edit" && supportsTextGeneration) {
             setGenerationMode("text");
             setReferences([]);
+        } else if (!supportsTextGeneration && supportsImageEditing && generationMode === "text") {
+            setGenerationMode("edit");
         }
-    }, [generationMode, maxImageReferences]);
+    }, [generationMode, supportsImageEditing, supportsTextGeneration]);
+
+    useEffect(() => {
+        if (generationMode !== "text" || !model.toLowerCase().includes("wan2.6")) return;
+        const size = effectiveConfig.size.toLowerCase();
+        if (!size.includes("2048") && !size.includes("3840")) return;
+        updateConfig("size", size.includes("1152x2048") || size.includes("2160x3840") ? "9:16" : size.includes("2048x1152") || size.includes("3840x2160") ? "16:9" : "1:1");
+    }, [effectiveConfig.size, generationMode, model, updateConfig]);
 
     useEffect(() => {
         if (activeIntent?.kind !== "image") return;
@@ -184,6 +197,7 @@ export default function ImagePage() {
                                     name: asset.title || "角色参考图",
                                     type: asset.mime_type || "image/png",
                                     dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+                                    thumbnailUrl: asset.thumbnail_path,
                                 })),
                         ].slice(0, maxImageReferences),
                     ),
@@ -385,7 +399,7 @@ export default function ImagePage() {
                 message.warning("当前模型不接受更多参考图");
                 return;
             }
-            setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, maxImageReferences));
+            setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl, thumbnailUrl: payload.thumbnailUrl }].slice(0, maxImageReferences));
             setGenerationMode("edit");
             window.requestAnimationFrame(() => referenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
             message.success("已插入下方“参考图”并切换到参考图编辑模式");
@@ -483,6 +497,10 @@ export default function ImagePage() {
         }
         if (generationMode === "edit" && !references.length) {
             message.error("参考图编辑模式至少需要一张参考图");
+            return null;
+        }
+        if (generationMode === "text" && !supportsTextGeneration) {
+            message.error("当前模型不支持文生图，请切换到参考图编辑模式");
             return null;
         }
         const selectedReferences = generationMode === "edit" ? [...references] : [];
@@ -627,8 +645,8 @@ export default function ImagePage() {
                                     block
                                     value={generationMode}
                                     options={[
-                                        { label: "文生图", value: "text" },
-                                        { label: maxImageReferences > 0 ? "参考图编辑" : "参考图编辑（当前模型不支持）", value: "edit", disabled: maxImageReferences < 1 },
+                                        { label: supportsTextGeneration ? "文生图" : "文生图（当前模型不支持）", value: "text", disabled: !supportsTextGeneration },
+                                        { label: supportsImageEditing ? "参考图编辑" : "参考图编辑（当前模型不支持）", value: "edit", disabled: !supportsImageEditing },
                                     ]}
                                     onChange={(value) => setGenerationMode(value as "text" | "edit")}
                                 />
@@ -645,9 +663,9 @@ export default function ImagePage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图" />
+                                <Input.TextArea id="image-prompt" name="image_prompt" ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图" />
                                 {generationMode === "edit" ? <ReferencePromptMentions references={promptReferences} onInsert={insertPromptReference} /> : null}
-                                <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
+                                <Input.TextArea id="image-negative-prompt" name="image_negative_prompt" className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 
                             {maxImageReferences > 0 && generationMode === "edit" ? (
@@ -693,7 +711,7 @@ export default function ImagePage() {
                                     >
                                         {references.map((item, index) => (
                                             <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <img src={item.thumbnailUrl || item.dataUrl} alt={item.name} className="size-full object-cover" loading="lazy" />
                                                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
                                                 <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
                                                 <button
@@ -739,7 +757,7 @@ export default function ImagePage() {
                                 </div>
                                 {!parametersCollapsed ? (
                                     <div className="grid grid-cols-2 gap-4">
-                                        <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                        <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} baseSizesOnly={generationMode === "text" && model.toLowerCase().includes("wan2.6")} />
                                     </div>
                                 ) : (
                                     <button
@@ -824,6 +842,8 @@ export default function ImagePage() {
             </main>
             <input
                 ref={fileInputRef}
+                id="image-reference-upload"
+                name="image_reference_upload"
                 type="file"
                 accept="image/*"
                 multiple
@@ -846,15 +866,15 @@ export default function ImagePage() {
             </Drawer>
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} baseSizesOnly={generationMode === "text" && model.toLowerCase().includes("wan2.6")} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} onSelectNegativePrompt={setNegativePrompt} />
             <AssetPickerModal
                 open={assetPickerOpen}
                 defaultTab="my-assets"
-                acceptedTypes={maxImageReferences > 0 ? ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] : ["TEXT"]}
-                compatibilityHint={maxImageReferences > 0 ? `当前模型最多可使用 ${maxImageReferences} 张参考图，也可插入文本作为提示词。` : "当前模型仅支持文生图，可插入文本素材作为提示词。"}
+                acceptedTypes={supportsImageEditing ? ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] : ["TEXT"]}
+                compatibilityHint={supportsImageEditing ? `当前模型最多可使用 ${maxImageReferences} 张参考图，也可插入文本作为提示词。` : "当前模型仅支持文生图，可插入文本素材作为提示词。"}
                 onInsert={(payload) => void insertPickedAsset(payload)}
                 onClose={() => setAssetPickerOpen(false)}
             />
@@ -886,6 +906,7 @@ function GenerationSettings({
     onProjectChange,
     updateConfig,
     openConfigDialog,
+    baseSizesOnly,
 }: {
     config: AiConfig;
     model: string;
@@ -893,6 +914,7 @@ function GenerationSettings({
     onProjectChange: (value: string) => void;
     updateConfig: UpdateAiConfig;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
+    baseSizesOnly: boolean;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
@@ -907,7 +929,7 @@ function GenerationSettings({
                 <ProjectPicker value={projectId} onChange={onProjectChange} className="w-full" />
             </label>
             <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} baseSizesOnly={baseSizesOnly} />
             </div>
         </>
     );
@@ -934,7 +956,7 @@ function ResultImageCard({
 }) {
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <Image src={image.dataUrl} alt={`生成结果 ${index + 1}`} className="aspect-square object-cover" />
+            <Image src={image.thumbnailUrl || image.dataUrl} preview={{ src: image.dataUrl }} alt={`生成结果 ${index + 1}`} className="aspect-square object-cover" />
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
@@ -1144,6 +1166,7 @@ async function creativeJobToImageLog(job: CreativeJob): Promise<GenerationLog> {
         .map((asset) => ({
             id: asset.asset_id,
             dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+            thumbnailUrl: asset.thumbnail_path,
             durationMs: Math.max(0, ((job.finished_at || job.updated_at) - (job.started_at || job.created_at)) * 1000),
             width: asset.width || 0,
             height: asset.height || 0,
@@ -1175,6 +1198,7 @@ async function creativeJobToImageLog(job: CreativeJob): Promise<GenerationLog> {
                 name: asset.title || asset.asset_id,
                 type: asset.mime_type || "image/png",
                 dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+                thumbnailUrl: asset.thumbnail_path,
             })),
         durationMs: Math.max(0, ((job.finished_at || job.updated_at) - (job.started_at || job.created_at)) * 1000),
         successCount: images.length,
@@ -1184,7 +1208,7 @@ async function creativeJobToImageLog(job: CreativeJob): Promise<GenerationLog> {
         quality: config.quality,
         status: creativeImageStatusLabel(job.status),
         images,
-        thumbnails: images.map((image) => image.dataUrl),
+        thumbnails: images.map((image) => image.thumbnailUrl || image.dataUrl),
         task: job,
         error: job.error,
     };

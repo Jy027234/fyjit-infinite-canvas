@@ -39,15 +39,17 @@ type ImageSettingsPanelProps = {
     className?: string;
     maxCount?: number;
     quickCount?: number;
+    baseSizesOnly?: boolean;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, baseSizesOnly = false }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
-    const selectedAspect = aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
+    const visibleAspectOptions = baseSizesOnly ? aspectOptions.filter((item) => !item.value.includes("-2k") && !item.value.includes("-4k")) : aspectOptions;
+    const selectedAspect = visibleAspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
     const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
     const selectAspect = (value: string) => {
         const option = aspectOptions.find((item) => item.value === value);
@@ -103,7 +105,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {aspectOptions.map((item) => (
+                        {visibleAspectOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -194,6 +196,8 @@ function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange 
             </span>
             <input
                 type="number"
+                id={`image-dimension-${prefix.toLowerCase()}`}
+                name={`image_dimension_${prefix.toLowerCase()}`}
                 aria-label={prefix === "W" ? "图像宽度" : "图像高度"}
                 min={1}
                 disabled={disabled}
@@ -215,6 +219,8 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
         <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
                 type="number"
+                id="image-generation-count"
+                name="image_generation_count"
                 aria-label="生成张数"
                 min={1}
                 max={max}
