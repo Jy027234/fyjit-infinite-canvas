@@ -9,6 +9,7 @@ const lazyPage = (load: () => Promise<{ default: ComponentType }>) => async () =
 export const router = createBrowserRouter(
     [
         {
+            hydrateFallbackElement: <div role="status" className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">页面加载中…</div>,
             element: (
                 <UserLayout>
                     <AnalyticsTracker />

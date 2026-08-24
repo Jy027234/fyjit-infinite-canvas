@@ -49,6 +49,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 type GeneratedVideo = {
     id: string;
     url: string;
+    posterUrl?: string;
     storageKey?: string;
     durationMs: number;
     width: number;
@@ -227,6 +228,7 @@ export default function VideoPage() {
                                 name: asset.title || "角色参考图",
                                 type: asset.mime_type || "image/png",
                                 dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+                                thumbnailUrl: asset.thumbnail_path,
                             })),
                         ].slice(0, imageReferenceLimit),
                     );
@@ -482,7 +484,9 @@ export default function VideoPage() {
             if (imageReferenceLimit < references.length + 1) {
                 return;
             }
-            setReferences((value) => [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl }].slice(0, imageReferenceLimit));
+            setReferences((value) =>
+                [...value, { id: payload.assetId || nanoid(), assetId: payload.assetId, name: payload.title, type: "image/png", dataUrl: payload.dataUrl, thumbnailUrl: payload.thumbnailUrl }].slice(0, imageReferenceLimit),
+            );
             window.requestAnimationFrame(() => imageReferenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
             message.success("已插入下方“参考图”，生成时会作为 @图片N 参考素材提交");
         } else if (payload.kind === "video") {
@@ -525,7 +529,8 @@ export default function VideoPage() {
 
     const refreshLogs = async (resumePending = true) => {
         const response = await fetchCreativeJobs({ capability: "video_generation", pageSize: 100 });
-        const nextLogs = await Promise.all((response.items || []).map(creativeJobToVideoLog));
+        const fetchAsset = createDeduplicatedAssetFetcher();
+        const nextLogs = await Promise.all((response.items || []).map((job) => creativeJobToVideoLog(job, fetchAsset)));
         setLogs(nextLogs);
         if (resumePending) resumePendingLogs(nextLogs);
         return nextLogs;
@@ -560,6 +565,7 @@ export default function VideoPage() {
             const nextVideo: GeneratedVideo = {
                 id: asset.asset_id,
                 url: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+                posterUrl: asset.thumbnail_path,
                 durationMs: Date.now() - log.createdAt,
                 width: asset.width || 1280,
                 height: asset.height || 720,
@@ -685,9 +691,9 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格；可用 @图片1 关联参考素材" />
+                                <Input.TextArea id="video-prompt" name="video-prompt" ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格；可用 @图片1 关联参考素材" />
                                 <ReferencePromptMentions references={promptReferences} onInsert={insertPromptReference} />
-                                <Input.TextArea className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
+                                <Input.TextArea id="video-negative-prompt" name="video-negative-prompt" className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
                             </div>
 
                             {maxImageReferences <= 1 && multiReferenceVideoModel ? (
@@ -724,7 +730,7 @@ export default function VideoPage() {
                                     >
                                         {references.map((item, index) => (
                                             <div key={item.id} className="group relative h-24 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <img src={item.thumbnailUrl || item.dataUrl} alt={item.name} className="size-full object-cover" loading="lazy" />
                                                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
                                                 <span className="absolute bottom-1 left-1 max-w-[calc(100%-8px)] truncate rounded bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
                                                     {imageReferencePurpose(index, references.length)} · {item.assetId ? "素材中心" : "提交时上传"}
@@ -938,6 +944,8 @@ export default function VideoPage() {
                 </section>
             </main>
             <input
+                id="video-reference-files"
+                name="video-reference-files"
                 ref={fileInputRef}
                 type="file"
                 accept="image/*,video/mp4,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav"
@@ -1019,7 +1027,7 @@ function GenerationSettings({
 function ResultVideoCard({ video, onDownload, onSaveAsset, onSendToFilm }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void; onSendToFilm: () => void }) {
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <video src={video.url} controls className="aspect-video w-full bg-black object-contain" />
+            <video src={video.url} poster={video.posterUrl} controls className="aspect-video w-full bg-black object-contain" />
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                 <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
@@ -1130,8 +1138,11 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     return (
         <div className={`overflow-hidden rounded-lg border transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}>
             <button type="button" className="block w-full p-2 text-left" onClick={onClick}>
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
+                <div className="grid grid-cols-[auto_4.5rem_minmax(0,1fr)_auto] items-start gap-2">
                     <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
+                    <div className="grid aspect-video w-[4.5rem] place-items-center overflow-hidden rounded-md bg-black/90 text-white/65">
+                        {log.video?.posterUrl ? <img src={log.video.posterUrl} alt="" className="size-full object-cover" loading="lazy" /> : <VideoIcon className="size-5" aria-hidden="true" />}
+                    </div>
                     <div className="min-w-0">
                         <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
                         <div className="mt-2 flex flex-wrap gap-1">
@@ -1169,10 +1180,23 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function creativeJobToVideoLog(job: CreativeJob): Promise<GenerationLog> {
+type CreativeAssetFetcher = (assetId: string) => Promise<CreativeAsset | null>;
+
+function createDeduplicatedAssetFetcher(): CreativeAssetFetcher {
+    const requests = new Map<string, Promise<CreativeAsset | null>>();
+    return (assetId) => {
+        const existing = requests.get(assetId);
+        if (existing) return existing;
+        const request = fetchCreativeAsset(assetId).catch(() => null);
+        requests.set(assetId, request);
+        return request;
+    };
+}
+
+async function creativeJobToVideoLog(job: CreativeJob, fetchAsset: CreativeAssetFetcher = (assetId) => fetchCreativeAsset(assetId).catch(() => null)): Promise<GenerationLog> {
     const [resultAssets, referenceAssets] = await Promise.all([
-        Promise.all((job.result_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId).catch(() => null))),
-        Promise.all((job.reference_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId).catch(() => null))),
+        Promise.all((job.result_asset_ids || []).map(fetchAsset)),
+        Promise.all((job.reference_asset_ids || []).map(fetchAsset)),
     ]);
     const availableReferences = referenceAssets.filter((asset): asset is CreativeAsset => Boolean(asset));
     const references: ReferenceImage[] = availableReferences
@@ -1183,6 +1207,7 @@ async function creativeJobToVideoLog(job: CreativeJob): Promise<GenerationLog> {
             name: asset.title || asset.asset_id,
             type: asset.mime_type || "image/png",
             dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+            thumbnailUrl: asset.thumbnail_path,
         }));
     const videoReferences: ReferenceVideo[] = availableReferences
         .filter((asset) => asset.type === "VIDEO")
@@ -1213,6 +1238,7 @@ async function creativeJobToVideoLog(job: CreativeJob): Promise<GenerationLog> {
         ? {
               id: resultAsset.asset_id,
               url: resultAsset.preview_path || `/api/creative/assets/${encodeURIComponent(resultAsset.asset_id)}/content`,
+              posterUrl: resultAsset.thumbnail_path,
               durationMs,
               width: resultAsset.width || 1280,
               height: resultAsset.height || 720,
