@@ -1,0 +1,9 @@
+{
+    "baseline": "2026-09-13 P2 production build",
+    "reviewPolicy": "Raising a limit requires a PR note with raw/gzip impact, dependency rationale, and reviewer approval.",
+    "limitsKiB": {
+        "initialJs": { "raw": 1150, "gzip": 380 },
+        "largestRouteChunk": { "raw": 260, "gzip": 80 },
+        "initialCss": { "raw": 145, "gzip": 25 }
+    }
+}

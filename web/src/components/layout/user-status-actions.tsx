@@ -14,9 +14,10 @@ type UserStatusActionsProps = {
     variant?: "default" | "canvas";
     onOpenShortcuts?: () => void;
     onOpenPlugins?: () => void;
+    onPreparePlugins?: () => void;
 };
 
-export function UserStatusActions({ variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+export function UserStatusActions({ variant = "default", onOpenShortcuts, onOpenPlugins, onPreparePlugins }: UserStatusActionsProps) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const canvasTheme = canvasThemes[theme];
@@ -30,7 +31,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, onOpen
     return (
         <div className="inline-flex shrink-0 items-center gap-1">
             {onOpenPlugins ? (
-                <button type="button" className={naturalIconClass} style={iconStyle} onClick={onOpenPlugins} aria-label="节点插件" title="节点插件">
+                <button type="button" className={naturalIconClass} style={iconStyle} onClick={onOpenPlugins} onPointerEnter={onPreparePlugins} onFocus={onPreparePlugins} aria-label="节点插件" title="节点插件">
                     <Puzzle className="size-4" />
                 </button>
             ) : null}

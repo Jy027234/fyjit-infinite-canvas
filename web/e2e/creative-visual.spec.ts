@@ -134,6 +134,64 @@ test("shell shares FYJIT language and theme preferences", async ({ page }) => {
     await expect.poll(() => page.evaluate(() => window.localStorage.getItem("i18nextLng"))).toBe("ja");
 });
 
+test("performance metrics use page, device, and version dimensions without sensitive URL data", async ({ page }) => {
+    await page.addInitScript(() => {
+        const target = window as unknown as {
+            __RUNTIME_CONFIG__: { ANALYTICS_GA4_ID: string };
+            __fyjitPerformanceMetrics: unknown[];
+        };
+        target.__RUNTIME_CONFIG__ = { ANALYTICS_GA4_ID: "G-FYJIT-TEST" };
+        target.__fyjitPerformanceMetrics = [];
+        window.addEventListener("fyjit:performance-metric", (event) => target.__fyjitPerformanceMetrics.push((event as CustomEvent).detail));
+    });
+    await page.route("https://www.googletagmanager.com/**", (route) => route.fulfill({ status: 204 }));
+    await prepareCreativePage(page, viewports[3]);
+    await page.route("**/api/creative/jobs**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: creativeJobFixture(1, "FAILED") }) }));
+
+    await page.goto("/creative/image?agentToken=never-send-this&prompt=never-send-this-either");
+    await expect(page.getByRole("heading", { name: "生图工作台", exact: true })).toBeVisible();
+    await expect
+        .poll(() =>
+            page.evaluate(() => {
+                const target = window as unknown as { __fyjitPerformanceMetrics: Array<{ name?: string }> };
+                return target.__fyjitPerformanceMetrics.some((metric) => metric.name === "workbench_ready");
+            }),
+        )
+        .toBe(true);
+
+    await page.locator("#image-prompt").fill("仅用于本地验收的提示词");
+    const generate = page.getByRole("button", { name: "开始生成", exact: true });
+    await expect(generate).toBeEnabled();
+    await generate.click();
+    await expect
+        .poll(() =>
+            page.evaluate(() => {
+                const target = window as unknown as { __fyjitPerformanceMetrics: Array<{ name?: string }> };
+                return target.__fyjitPerformanceMetrics.some((metric) => metric.name === "job_accepted");
+            }),
+        )
+        .toBe(true);
+
+    const payload = await page.evaluate(() => {
+        const target = window as unknown as {
+            __fyjitPerformanceMetrics: Array<Record<string, unknown>>;
+            dataLayer?: unknown[];
+        };
+        return { metrics: target.__fyjitPerformanceMetrics, analytics: target.dataLayer || [] };
+    });
+    expect(payload.metrics.filter((metric) => metric.name === "workbench_ready" || metric.name === "job_accepted")).toEqual(
+        expect.arrayContaining([
+            expect.objectContaining({ name: "workbench_ready", route: "creative.image", device: "desktop", version: expect.any(String), value: expect.any(Number) }),
+            expect.objectContaining({ name: "job_accepted", route: "creative.image", device: "desktop", version: expect.any(String), value: expect.any(Number) }),
+        ]),
+    );
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("never-send-this");
+    const pageView = payload.analytics.find((entry) => Array.isArray(entry) && entry[0] === "event" && entry[1] === "page_view") as [string, string, { page_path: string; page_location: string }] | undefined;
+    expect(pageView?.[2].page_path).toBe("/image");
+    expect(pageView?.[2].page_location).toMatch(/\/creative\/image$/);
+});
+
 test("workbenches expose the server-side estimate and normalized request summary", async ({ page }) => {
     await prepareCreativePage(page, viewports[3]);
     await page.goto("/creative/image");
@@ -794,8 +852,18 @@ test("asset center keeps list failures inline and retries without showing a fals
     await prepareCreativePage(page, viewports[3]);
     let assetListRequests = 0;
     let allowAssetListSuccess = false;
+    let deleted = false;
+    let restored = false;
     await page.route("**/api/creative/assets**", async (route) => {
         const url = new URL(route.request().url());
+        if (route.request().method() === "DELETE") {
+            deleted = true;
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: null }) });
+        }
+        if (route.request().method() === "POST" && url.pathname.endsWith("/restore")) {
+            restored = true;
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: (creativeFixture("/assets") as { items: unknown[] }).items[0] }) });
+        }
         if (route.request().method() !== "GET" || !url.pathname.endsWith("/assets")) return route.fallback();
         assetListRequests += 1;
         if (!allowAssetListSuccess) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ success: false, message: "素材服务暂时不可用" }) });
@@ -808,7 +876,22 @@ test("asset center keeps list failures inline and retries without showing a fals
     allowAssetListSuccess = true;
     await page.getByRole("button", { name: /重试加载/ }).click();
     await expect(page.getByText("晨雾中的山谷", { exact: true })).toBeVisible();
+    const assetCard = page.locator(".ant-card").filter({ hasText: "晨雾中的山谷" }).first();
+    await expect(assetCard.locator('[data-action-priority="primary"]')).toContainText("用于生图");
+    await expect(assetCard.locator('[data-action-priority="destructive"]')).toContainText("删除");
     await expect.poll(() => assetListRequests).toBeGreaterThan(1);
+    await assetCard.getByRole("button", { name: "删除", exact: true }).click();
+    const deleteDialog = page.getByRole("dialog", { name: "删除素材" });
+    await deleteDialog.getByRole("button", { name: "移入回收站" }).click();
+    await expect.poll(() => deleted).toBe(true);
+    await expect(page.locator("#creative-main").getByText("素材已移入回收站", { exact: true })).toBeVisible();
+    await page
+        .locator("#creative-main")
+        .getByRole("alert")
+        .getByRole("button", { name: /撤\s*销/ })
+        .click();
+    await expect.poll(() => restored).toBe(true);
+    await expect(page.locator("#creative-main").getByText("素材已恢复", { exact: true })).toBeVisible();
 });
 
 test("asset center hands text to Character Studio and video to FilmGen", async ({ page }) => {
@@ -946,10 +1029,12 @@ test("prompt library preserves source attribution and imports owned JSON", async
     await compare.getByRole("button", { name: "采用并创建新版本" }).click();
     await expect.poll(() => updates.length).toBe(1);
     expect(updates[0]).toMatchObject({ content: "人工确认后的精修提示词" });
+    await expect(page.locator("#creative-main").getByText("已采用精修结果并创建新版本", { exact: true })).toBeVisible();
 
     await page.locator('input[type="file"][accept*="json"]').setInputFiles({ name: "prompts.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({ title: "我的导入提示词", content: "{{subject}} in light" })) });
     await expect.poll(() => imported.length).toBe(1);
     expect(imported[0]).toMatchObject({ title: "我的导入提示词", source_type: "import", variables: [{ name: "subject", label: "subject" }] });
+    await expect(page.locator("#creative-main").getByText("已导入 1 条提示词", { exact: true })).toBeVisible();
 });
 
 test("system prompt validates variables, opens image workbench, and restores the library view", async ({ page }) => {
@@ -1000,7 +1085,9 @@ test("system prompt validates variables, opens image workbench, and restores the
         element.dispatchEvent(new Event("scroll"));
     });
 
-    await page.getByRole("heading", { name: "系统图像模板 12", exact: true }).click();
+    const catalogCard = page.locator(".ant-card").filter({ hasText: "系统图像模板 12" }).first();
+    await expect(catalogCard.getByRole("button", { name: "保存到我的提示词" })).toHaveClass(/ant-btn-primary/);
+    await catalogCard.getByRole("heading", { name: "系统图像模板 12", exact: true }).click();
     const details = page.getByRole("dialog", { name: "系统图像模板 12" });
     await details.getByRole("button", { name: "用于生图" }).click();
     await expect(details.getByText("主体 *")).toBeVisible();
@@ -1031,6 +1118,10 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
     await prepareCreativePage(page, viewports[3]);
     const snapshots: Array<Record<string, unknown>> = [];
     const restores: Array<Record<string, unknown>> = [];
+    const deferredPluginRequests: string[] = [];
+    page.on("request", (request) => {
+        if (request.url().includes("canvas-plugin-manager-modal")) deferredPluginRequests.push(request.url());
+    });
     const emptyDocument = { nodes: [], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } };
     await page.route("**/api/creative/canvases**", async (route) => {
         const url = new URL(route.request().url());
@@ -1076,6 +1167,13 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
     await page.goto("/creative/canvas", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
     await expect(page).toHaveURL(/\/creative\/canvas\/canvas-1$/, { timeout: 10_000 });
+    expect(deferredPluginRequests).toHaveLength(0);
+    const pluginButton = page.getByRole("button", { name: "节点插件" });
+    await pluginButton.hover();
+    await expect.poll(() => deferredPluginRequests.length).toBeGreaterThan(0);
+    await pluginButton.click();
+    await expect(page.getByRole("dialog", { name: "节点插件" })).toBeVisible();
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "打开画布菜单" }).click();
     const canvasMenu = page.locator(".ant-dropdown-menu:visible");
     await expect(canvasMenu.getByText("生图工作台", { exact: true })).toBeVisible();
@@ -1085,6 +1183,7 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
     await expect(canvasMenu.getByText("提示词库", { exact: true })).toBeVisible();
     await clickVisibleCanvasMenuItem(page, "创建版本快照");
     await expect.poll(() => snapshots.some((snapshot) => snapshot.expected_version === 1 && snapshot.schema_version === 2)).toBe(true);
+    await expect(page.getByRole("alert").getByText("版本快照已创建，并已加入版本历史。", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "打开画布菜单" }).click();
     await clickVisibleCanvasMenuItem(page, "版本历史");
     const versions = page.getByRole("dialog", { name: "版本历史" });
@@ -1095,6 +1194,7 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
         .click();
     await expect.poll(() => restores.length).toBe(1);
     expect(restores[0]).toMatchObject({ expected_version: 2 });
+    await expect(versions.getByText("已恢复版本 v1，原状态仍保留在版本历史中。", { exact: true })).toBeVisible();
 });
 
 test("canvas guards every cross-app exit when the current project cannot be saved", async ({ page }) => {

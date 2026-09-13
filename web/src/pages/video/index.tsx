@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, ClipboardPaste, Download, FolderPlus, Music2, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { App, Button, Drawer, Input, Tag, Typography } from "antd";
+import { Alert, App, Button, Drawer, Input, Tag, Typography } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
@@ -24,6 +24,8 @@ import { CreativeEstimateSummary } from "@/components/creative-estimate-summary"
 import { CreativeGenerationStatus, creativeJobPendingSnapshot, summarizeCreativePendingResults, type CreativeGenerationPhase } from "@/components/creative-generation-status";
 import { CreativeHistoryPanel } from "@/components/creative-history-panel";
 import { CreativeReadinessNotice } from "@/components/creative-readiness-notice";
+import { CreativeCardActionBar } from "@/components/creative-card-action-bar";
+import { CreativeOperationFeedback } from "@/components/creative-operation-feedback";
 import { CreativeResultCardShell } from "@/components/creative-result-card-shell";
 import { creativeJobStatusLabel, CreativeStatusTag, type CreativeHistoryStatus } from "@/components/creative-status-tag";
 import { ModelPicker } from "@/components/model-picker";
@@ -32,6 +34,7 @@ import { ProjectPicker } from "@/components/project-picker";
 import { ReferencePromptMentions } from "@/components/reference-prompt-mentions";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { startCreativeMetric } from "@/lib/analytics";
 import { randomId } from "@/lib/utils";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { buildReferencePromptText } from "@/lib/image-reference-prompt";
@@ -195,6 +198,8 @@ export default function VideoPage() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [referenceRecoveryNotice, setReferenceRecoveryNotice] = useState<{ type: "warning" | "error"; message: string; description: string }>();
+    const [handoffFailure, setHandoffFailure] = useState<{ message: string; video: GeneratedVideo }>();
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
@@ -354,7 +359,11 @@ export default function VideoPage() {
                         if (accepted.length) setAudioReferences((current) => [...current, ...accepted].slice(0, maxAudioReferences));
                     }
                 })
-                .catch((error) => message.error(error instanceof Error ? error.message : "创作素材恢复失败"));
+                .catch((error) => {
+                    const errorMessage = error instanceof Error ? error.message : "创作素材恢复失败";
+                    message.error(errorMessage);
+                    setReferenceRecoveryNotice({ type: "error", message: "创作素材恢复失败", description: errorMessage });
+                });
         }
     }, [activeIntent, message]);
 
@@ -473,7 +482,11 @@ export default function VideoPage() {
                         .map((item) => item.value)
                         .slice(0, draftMaxAudioReferences),
                 );
-                if (restored.filter(Boolean).length !== draft.references.length) message.info("草稿中的部分参考素材已失效，请重新选择");
+                if (restored.filter(Boolean).length !== draft.references.length) {
+                    const missingCount = draft.references.length - restored.filter(Boolean).length;
+                    message.info("草稿中的部分参考素材已失效，请重新选择");
+                    setReferenceRecoveryNotice({ type: "warning", message: `${missingCount} 个参考素材已失效`, description: "可继续使用已恢复素材，或从素材中心重新选择。" });
+                }
             }
             if (!cancelled) {
                 draftScopeRef.current = scope;
@@ -623,6 +636,7 @@ export default function VideoPage() {
         }
     };
     const generate = async () => {
+        const finishJobAcceptedMetric = startCreativeMetric("job_accepted", "creative.video");
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
         const snapshot = buildRequestSnapshot();
@@ -665,6 +679,7 @@ export default function VideoPage() {
                 reference_asset_ids: referenceAssetIds,
                 idempotency_key: randomId(),
             });
+            finishJobAcceptedMetric();
             updateCompletedJobCache(task);
             draftWriteRevisionRef.current += 1;
             await clearCreativeDraft(currentUserId, "video", projectId);
@@ -800,10 +815,13 @@ export default function VideoPage() {
 
     const sendResultToFilmProduction = async (video: GeneratedVideo) => {
         try {
+            setHandoffFailure(undefined);
             const intent = await createCreativeIntent("asset", { asset_ids: [video.id] });
             window.location.assign(`/professional-video?intent=${encodeURIComponent(intent.id)}`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "无法送入影视制作");
+            const errorMessage = error instanceof Error ? error.message : "无法送入影视制作";
+            message.error(errorMessage);
+            setHandoffFailure({ message: errorMessage, video });
         }
     };
 
@@ -1136,6 +1154,7 @@ export default function VideoPage() {
                                 <Input.TextArea
                                     id="video-prompt"
                                     name="video-prompt"
+                                    data-fyjit-performance-ready="workbench-input"
                                     ref={promptInputRef}
                                     value={prompt}
                                     onChange={(event) => setPrompt(event.target.value)}
@@ -1161,6 +1180,22 @@ export default function VideoPage() {
                                         切换为多参考图模型（最多 {multiReferenceMaxImages} 张）
                                     </Button>
                                 </div>
+                            ) : null}
+
+                            {referenceRecoveryNotice ? (
+                                <Alert
+                                    type={referenceRecoveryNotice.type}
+                                    showIcon
+                                    closable
+                                    message={referenceRecoveryNotice.message}
+                                    description={referenceRecoveryNotice.description}
+                                    action={
+                                        <Button size="small" onClick={() => setAssetPickerOpen(true)}>
+                                            重新选择
+                                        </Button>
+                                    }
+                                    onClose={() => setReferenceRecoveryNotice(undefined)}
+                                />
                             ) : null}
 
                             {maxImageReferences > 0 ? (
@@ -1344,6 +1379,18 @@ export default function VideoPage() {
                     </CreativeWorkbenchComposer>
 
                     <CreativeWorkbenchResult status={running && pendingSummary ? <CreativeGenerationStatus {...pendingSummary} elapsedMs={elapsedMs} /> : null}>
+                        <CreativeOperationFeedback
+                            className="mb-4"
+                            feedback={handoffFailure ? { type: "error", message: "无法送入影视制作", description: handoffFailure.message } : undefined}
+                            action={
+                                handoffFailure ? (
+                                    <Button size="small" onClick={() => void sendResultToFilmProduction(handoffFailure.video)}>
+                                        重试送入
+                                    </Button>
+                                ) : null
+                            }
+                            onClose={() => setHandoffFailure(undefined)}
+                        />
                         {previewLog ? (
                             <CreativeDraftNotice
                                 tone="preview"
@@ -1513,17 +1560,20 @@ function ResultVideoCard({ video, onDownload, onSendToFilm }: { video: Generated
                         <span>{formatBytes(video.bytes)}</span>
                         <span>{formatDuration(video.durationMs)}</span>
                     </div>
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs text-success">已保存到素材中心</span>
-                        <div className="flex shrink-0 gap-1">
-                            <Button size="small" onClick={onSendToFilm}>
+                    <CreativeCardActionBar
+                        className="min-w-0 flex-1"
+                        status={<span className="text-xs text-success">已保存到素材中心</span>}
+                        primary={
+                            <Button type="primary" size="small" onClick={onSendToFilm}>
                                 送入影视制作
                             </Button>
+                        }
+                        secondary={
                             <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(video)}>
                                 下载
                             </Button>
-                        </div>
-                    </div>
+                        }
+                    />
                 </>
             }
         />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { saveAs } from "file-saver";
@@ -26,17 +26,17 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useFyjitStore } from "@/stores/use-fyjit-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
-import { App, Button, Modal } from "antd";
+import { Alert, App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
-import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
-import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
-import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
-import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
-import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
+import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
+import type { CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
+import type { CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
+import type { CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
+import type { CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
@@ -44,7 +44,8 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
-import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { loadCanvasAssetPicker, loadCanvasImageDialogs, loadCanvasPluginManager } from "@/components/canvas/deferred-canvas-tools";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -75,7 +76,6 @@ import {
 } from "@/lib/canvas/canvas-generation-helpers";
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
-import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
@@ -95,6 +95,22 @@ import {
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
 registerBuiltinNodes();
+
+const DeferredCanvasPluginManagerModal = lazy(() => loadCanvasPluginManager().then(({ CanvasPluginManagerModal }) => ({ default: CanvasPluginManagerModal })));
+const DeferredCanvasNodeAngleDialog = lazy(() => loadCanvasImageDialogs().then(({ CanvasNodeAngleDialog }) => ({ default: CanvasNodeAngleDialog })));
+const DeferredCanvasNodeCropDialog = lazy(() => loadCanvasImageDialogs().then(({ CanvasNodeCropDialog }) => ({ default: CanvasNodeCropDialog })));
+const DeferredCanvasNodeMaskEditDialog = lazy(() => loadCanvasImageDialogs().then(({ CanvasNodeMaskEditDialog }) => ({ default: CanvasNodeMaskEditDialog })));
+const DeferredCanvasNodeSplitDialog = lazy(() => loadCanvasImageDialogs().then(({ CanvasNodeSplitDialog }) => ({ default: CanvasNodeSplitDialog })));
+const DeferredCanvasNodeUpscaleDialog = lazy(() => loadCanvasImageDialogs().then(({ CanvasNodeUpscaleDialog }) => ({ default: CanvasNodeUpscaleDialog })));
+const DeferredCanvasAssetPicker = lazy(() => loadCanvasAssetPicker().then(({ AssetPickerModal }) => ({ default: AssetPickerModal })));
+
+function DeferredCanvasToolFallback() {
+    return (
+        <div role="status" className="pointer-events-none absolute left-1/2 top-16 z-[80] -translate-x-1/2 rounded-lg border border-border bg-background/95 px-4 py-2 text-sm text-muted-foreground shadow-md">
+            正在加载工具…
+        </div>
+    );
+}
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -288,6 +304,8 @@ function InfiniteCanvasPage() {
     const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
     const [canvasRevisions, setCanvasRevisions] = useState<Array<CreativeCanvasRevision>>([]);
     const [restoringRevisionId, setRestoringRevisionId] = useState("");
+    const [versionHistoryFeedback, setVersionHistoryFeedback] = useState<{ type: "success" | "error"; message: string; retry?: "history" }>();
+    const [snapshotFeedback, setSnapshotFeedback] = useState<{ type: "success" | "error"; message: string }>();
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -1117,14 +1135,30 @@ function InfiniteCanvasPage() {
     const loadVersionHistory = useCallback(async () => {
         setVersionHistoryOpen(true);
         setVersionHistoryLoading(true);
+        setVersionHistoryFeedback(undefined);
         try {
             setCanvasRevisions(await fetchCreativeCanvasRevisions(projectId));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "版本历史读取失败");
+            const errorMessage = error instanceof Error ? error.message : "版本历史读取失败";
+            message.error(errorMessage);
+            setVersionHistoryFeedback({ type: "error", message: errorMessage, retry: "history" });
         } finally {
             setVersionHistoryLoading(false);
         }
     }, [message, projectId]);
+
+    const createVersionSnapshot = useCallback(async () => {
+        setSnapshotFeedback(undefined);
+        try {
+            if (!(await snapshotProject(projectId))) throw new Error("版本快照创建失败，请处理同步冲突后重试");
+            message.success("版本快照已创建");
+            setSnapshotFeedback({ type: "success", message: "版本快照已创建，并已加入版本历史。" });
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "版本快照创建失败，请处理同步冲突后重试";
+            message.error(errorMessage);
+            setSnapshotFeedback({ type: "error", message: errorMessage });
+        }
+    }, [message, projectId, snapshotProject]);
 
     const restoreRevision = useCallback(
         (revision: CreativeCanvasRevision) => {
@@ -1138,10 +1172,18 @@ function InfiniteCanvasPage() {
                     try {
                         if (!(await restoreProjectRevision(projectId, revision.revision_id))) throw new Error("画布版本恢复失败");
                         setProjectReloadNonce((value) => value + 1);
-                        setCanvasRevisions(await fetchCreativeCanvasRevisions(projectId));
                         message.success(`已恢复版本 v${revision.version}`);
+                        setVersionHistoryFeedback({ type: "success", message: `已恢复版本 v${revision.version}，原状态仍保留在版本历史中。` });
+                        try {
+                            setCanvasRevisions(await fetchCreativeCanvasRevisions(projectId));
+                        } catch (error) {
+                            const errorMessage = error instanceof Error ? error.message : "版本历史刷新失败";
+                            setVersionHistoryFeedback({ type: "error", message: `版本已恢复，但${errorMessage}`, retry: "history" });
+                        }
                     } catch (error) {
-                        message.error(error instanceof Error ? error.message : "画布版本恢复失败");
+                        const errorMessage = error instanceof Error ? error.message : "画布版本恢复失败";
+                        message.error(errorMessage);
+                        setVersionHistoryFeedback({ type: "error", message: errorMessage });
                         throw error;
                     } finally {
                         setRestoringRevisionId("");
@@ -3039,7 +3081,7 @@ function InfiniteCanvasPage() {
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}
-                    onCreateSnapshot={() => void snapshotProject(projectId).then((succeeded) => (succeeded ? message.success("版本快照已创建") : message.error("版本快照创建失败，请处理同步冲突后重试")))}
+                    onCreateSnapshot={() => void createVersionSnapshot()}
                     onOpenVersionHistory={() => void loadVersionHistory()}
                     onImportImage={() => handleUploadRequest()}
                     onOpenPlugins={() => setPluginManagerOpen(true)}
@@ -3050,15 +3092,33 @@ function InfiniteCanvasPage() {
                     onToggleAgent={toggleAgentPanel}
                 />
 
-                {currentProject?.syncError ? (
-                    <div
-                        role="alert"
-                        className="absolute left-1/2 top-14 z-50 flex max-w-[min(90vw,760px)] -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-md dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
-                    >
-                        <span>{currentProject.syncError}。本地编辑仍保留，请重试保存；持续失败时可从项目菜单导出副本。</span>
-                        <Button size="small" type="text" className="!shrink-0" onClick={() => void saveProject(projectId)}>
-                            立即重试
-                        </Button>
+                {currentProject?.syncError || snapshotFeedback ? (
+                    <div className="pointer-events-none absolute left-1/2 top-14 z-50 flex w-[min(90vw,760px)] -translate-x-1/2 flex-col gap-2">
+                        {currentProject?.syncError ? (
+                            <div role="alert" className="pointer-events-auto flex items-center gap-3 rounded-lg border border-warning/45 bg-warning/15 px-4 py-2 text-sm text-foreground shadow-md">
+                                <span>{currentProject.syncError}。本地编辑仍保留，请重试保存；持续失败时可从项目菜单导出副本。</span>
+                                <Button size="small" type="text" className="!shrink-0" onClick={() => void saveProject(projectId)}>
+                                    立即重试
+                                </Button>
+                            </div>
+                        ) : null}
+                        {snapshotFeedback ? (
+                            <Alert
+                                className="pointer-events-auto shadow-md"
+                                type={snapshotFeedback.type}
+                                showIcon
+                                closable
+                                message={snapshotFeedback.message}
+                                action={
+                                    snapshotFeedback.type === "error" ? (
+                                        <Button size="small" onClick={() => void createVersionSnapshot()}>
+                                            重试
+                                        </Button>
+                                    ) : undefined
+                                }
+                                onClose={() => setSnapshotFeedback(undefined)}
+                            />
+                        ) : null}
                     </div>
                 ) : null}
 
@@ -3263,25 +3323,45 @@ function InfiniteCanvasPage() {
                 <input ref={imageInputRef} type="file" multiple accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
-                <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
-
-                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
-
-                {maskEditNode?.metadata?.content ? (
-                    <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
+                {pluginManagerOpen ? (
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasPluginManagerModal open onClose={() => setPluginManagerOpen(false)} />
+                    </Suspense>
                 ) : null}
 
-                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+                {cropNode?.metadata?.content ? (
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasNodeCropDialog dataUrl={cropNode.metadata.content} open onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode, crop)} />
+                    </Suspense>
+                ) : null}
+
+                {maskEditNode?.metadata?.content ? (
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode, payload)} />
+                    </Suspense>
+                ) : null}
+
+                {splitNode?.metadata?.content ? (
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode, params)} />
+                    </Suspense>
+                ) : null}
 
                 {upscaleNode?.metadata?.content ? (
-                    <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode, params)} />
+                    </Suspense>
                 ) : null}
 
                 <Modal title="AI 超分" open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>
                     <div className="py-8 text-center text-base font-medium">暂未实现</div>
                 </Modal>
 
-                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+                {angleNode?.metadata?.content ? (
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode, params)} />
+                    </Suspense>
+                ) : null}
 
                 <Modal
                     title="图片详情"
@@ -3314,6 +3394,22 @@ function InfiniteCanvasPage() {
 
                 <Modal title="版本历史" open={versionHistoryOpen} footer={null} width={640} onCancel={() => setVersionHistoryOpen(false)}>
                     <div className="max-h-[60vh] space-y-2 overflow-y-auto pt-2" aria-live="polite">
+                        {versionHistoryFeedback ? (
+                            <Alert
+                                type={versionHistoryFeedback.type}
+                                showIcon
+                                closable
+                                message={versionHistoryFeedback.message}
+                                action={
+                                    versionHistoryFeedback.retry ? (
+                                        <Button size="small" loading={versionHistoryLoading} onClick={() => void loadVersionHistory()}>
+                                            重试
+                                        </Button>
+                                    ) : undefined
+                                }
+                                onClose={() => setVersionHistoryFeedback(undefined)}
+                            />
+                        ) : null}
                         {versionHistoryLoading ? <p className="py-8 text-center text-sm opacity-60">正在读取版本历史…</p> : null}
                         {!versionHistoryLoading && !canvasRevisions.length ? <p className="py-8 text-center text-sm opacity-60">暂无版本记录</p> : null}
                         {canvasRevisions.map((revision, index) => (
@@ -3336,19 +3432,23 @@ function InfiniteCanvasPage() {
                     </div>
                 </Modal>
 
-                <AssetPickerModal
-                    open={assetPickerOpen}
-                    acceptedTypes={referenceAssetTargetNodeId ? ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] : undefined}
-                    compatibilityHint={referenceAssetTargetNodeId ? "所选图片将作为当前节点的参考素材，并可在提示词中通过 @图片N 关联。" : undefined}
-                    onInsert={(payload) => {
-                        if (referenceAssetTargetNodeId) void handleReferenceAssetInsert(payload);
-                        else handleAssetInsert(payload);
-                    }}
-                    onClose={() => {
-                        setReferenceAssetTargetNodeId(null);
-                        setAssetPickerOpen(false);
-                    }}
-                />
+                {assetPickerOpen ? (
+                    <Suspense fallback={<DeferredCanvasToolFallback />}>
+                        <DeferredCanvasAssetPicker
+                            open
+                            acceptedTypes={referenceAssetTargetNodeId ? ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"] : undefined}
+                            compatibilityHint={referenceAssetTargetNodeId ? "所选图片将作为当前节点的参考素材，并可在提示词中通过 @图片N 关联。" : undefined}
+                            onInsert={(payload) => {
+                                if (referenceAssetTargetNodeId) void handleReferenceAssetInsert(payload);
+                                else handleAssetInsert(payload);
+                            }}
+                            onClose={() => {
+                                setReferenceAssetTargetNodeId(null);
+                                setAssetPickerOpen(false);
+                            }}
+                        />
+                    </Suspense>
+                ) : null}
             </section>
         </main>
     );

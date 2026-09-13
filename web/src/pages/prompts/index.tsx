@@ -4,6 +4,8 @@ import { Alert, App, Button, Card, Drawer, Empty, Form, Input, Modal, Pagination
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useCreativePromptList } from "@/hooks/use-creative-prompt-list";
+import { CreativeCardActionBar } from "@/components/creative-card-action-bar";
+import { CreativeOperationFeedback, type CreativeOperationFeedbackState } from "@/components/creative-operation-feedback";
 import { randomId } from "@/lib/utils";
 import {
     createCreativePrompt,
@@ -73,6 +75,7 @@ export default function PromptsPage() {
     const [refining, setRefining] = useState<CreativePrompt>();
     const [refinedText, setRefinedText] = useState("");
     const [refiningLoading, setRefiningLoading] = useState(false);
+    const [feedback, setFeedback] = useState<CreativeOperationFeedbackState>();
     const modelsStatus = useFyjitStore((state) => state.modelsStatus);
     const tokensStatus = useFyjitStore((state) => state.tokensStatus);
     const loadModels = useFyjitStore((state) => state.loadModels);
@@ -165,11 +168,18 @@ export default function PromptsPage() {
             if (editing) await updateCreativePrompt(editing.prompt_id, input);
             else await createCreativePrompt(input);
             message.success(editing ? "提示词已更新并生成新版本" : "提示词已创建");
+            setFeedback({
+                type: "success",
+                message: editing ? "提示词已更新并生成新版本" : "提示词已创建",
+                description: "提示词列表已同步更新。",
+            });
             setFormOpen(false);
             setEditing(undefined);
             await invalidatePromptList();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "提示词保存失败");
+            const errorMessage = error instanceof Error ? error.message : "提示词保存失败";
+            message.error(errorMessage);
+            setFeedback({ type: "error", message: "提示词保存失败", description: errorMessage });
         }
     };
 
@@ -177,9 +187,12 @@ export default function PromptsPage() {
         try {
             await action();
             message.success(success);
+            setFeedback({ type: "success", message: success, description: "提示词列表已同步更新。" });
             await invalidatePromptList();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "操作失败");
+            const errorMessage = error instanceof Error ? error.message : "操作失败";
+            message.error(errorMessage);
+            setFeedback({ type: "error", message: "操作失败", description: errorMessage });
         }
     };
 
@@ -201,9 +214,12 @@ export default function PromptsPage() {
                 imported += 1;
             }
             message.success(`已导入 ${imported} 条提示词`);
+            setFeedback({ type: "success", message: `已导入 ${imported} 条提示词`, description: "导入结果已加入当前提示词库。" });
             await invalidatePromptList();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "提示词导入失败");
+            const errorMessage = error instanceof Error ? error.message : "提示词导入失败";
+            message.error(errorMessage);
+            setFeedback({ type: "error", message: "提示词导入失败", description: errorMessage });
         }
     };
 
@@ -242,7 +258,9 @@ export default function PromptsPage() {
             if (!asset.content?.trim()) throw new Error("精修结果为空");
             setRefinedText(asset.content.trim());
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "AI 精修失败");
+            const errorMessage = error instanceof Error ? error.message : "AI 精修失败";
+            message.error(errorMessage);
+            setFeedback({ type: "error", message: "AI 精修失败", description: errorMessage });
             setRefining(undefined);
         } finally {
             setRefiningLoading(false);
@@ -362,6 +380,8 @@ export default function PromptsPage() {
                             新建提示词
                         </Button>
                     </div>
+
+                    <CreativeOperationFeedback className="mt-6" feedback={feedback} onClose={() => setFeedback(undefined)} />
 
                     <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-busy={isFetching}>
                         {items.map((prompt) => (
@@ -602,34 +622,50 @@ function PromptCard({
                     ))}
                 </div>
             </button>
-            <div className="flex flex-wrap gap-2 px-4 pb-4">
-                <Button size="small" icon={<Copy className="size-3.5" />} onClick={onCopy}>
-                    复制
-                </Button>
-                {onFavorite ? (
-                    <Button size="small" icon={<Heart className="size-3.5" fill={prompt.favorite ? "currentColor" : "none"} />} onClick={onFavorite}>
-                        {prompt.favorite ? "已收藏" : "收藏"}
-                    </Button>
-                ) : null}
-                {onEdit ? (
-                    <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
-                        编辑
-                    </Button>
-                ) : null}
-                <Button size="small" icon={<Files className="size-3.5" />} onClick={onDuplicate}>
-                    {prompt.catalog ? "保存到我的提示词" : "副本"}
-                </Button>
-                {onRefine ? (
-                    <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={onRefine}>
-                        AI 精修
-                    </Button>
-                ) : null}
-                {onDelete ? (
-                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
-                        删除
-                    </Button>
-                ) : null}
-            </div>
+            <CreativeCardActionBar
+                className="px-4 pb-4"
+                primary={
+                    prompt.catalog ? (
+                        <Button type="primary" size="small" icon={<Files className="size-3.5" />} onClick={onDuplicate}>
+                            保存到我的提示词
+                        </Button>
+                    ) : null
+                }
+                secondary={
+                    <>
+                        <Button size="small" icon={<Copy className="size-3.5" />} onClick={onCopy}>
+                            复制
+                        </Button>
+                        {onFavorite ? (
+                            <Button size="small" icon={<Heart className="size-3.5" fill={prompt.favorite ? "currentColor" : "none"} />} onClick={onFavorite}>
+                                {prompt.favorite ? "已收藏" : "收藏"}
+                            </Button>
+                        ) : null}
+                        {onEdit ? (
+                            <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
+                                编辑
+                            </Button>
+                        ) : null}
+                        {!prompt.catalog ? (
+                            <Button size="small" icon={<Files className="size-3.5" />} onClick={onDuplicate}>
+                                副本
+                            </Button>
+                        ) : null}
+                        {onRefine ? (
+                            <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={onRefine}>
+                                AI 精修
+                            </Button>
+                        ) : null}
+                    </>
+                }
+                destructive={
+                    onDelete ? (
+                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
+                            删除
+                        </Button>
+                    ) : null
+                }
+            />
         </Card>
     );
 }
@@ -698,12 +734,12 @@ function PromptDrawer({
                         ))}
                     </div>
                     {prompt.source_type === "external" ? (
-                        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/20">
+                        <section className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm">
                             <div>作者：{prompt.author_name || "未记录"}</div>
                             <div className="mt-1">许可证：{prompt.source_license || "未记录"}</div>
                             <div className="mt-1">允许用途：{prompt.allowed_uses || "未记录"}</div>
                             {prompt.source_url ? (
-                                <a className="mt-2 inline-flex items-center gap-1 text-blue-600 hover:underline" href={prompt.source_url} target="_blank" rel="noreferrer">
+                                <a className="mt-2 inline-flex items-center gap-1 text-primary hover:underline" href={prompt.source_url} target="_blank" rel="noreferrer">
                                     <Link className="size-3.5" />
                                     查看原始来源
                                 </a>

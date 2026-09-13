@@ -547,16 +547,16 @@
 }
 
 .dark .ant-empty-description {
-    color: #a8a29e;
+    color: var(--muted-foreground);
 }
 
 .dark .ant-select-placeholder {
-    color: #a8a29e !important;
+    color: var(--muted-foreground) !important;
 }
 
 .dark .ant-btn-dangerous.ant-btn-color-dangerous {
-    border-color: #f87171;
-    color: #f87171;
+    border-color: var(--destructive);
+    color: var(--destructive);
 }
 
 .agent-streamdown {

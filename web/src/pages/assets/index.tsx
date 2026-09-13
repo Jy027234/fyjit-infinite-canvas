@@ -5,6 +5,8 @@ import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useCreativeAssetMutations, useCreativeAssetsQuery, useCreativeProjectsQuery } from "@/hooks/use-creative-asset-list";
+import { CreativeCardActionBar } from "@/components/creative-card-action-bar";
+import { CreativeOperationFeedback, type CreativeOperationFeedbackState } from "@/components/creative-operation-feedback";
 import { FyjitEmptyState, FyjitPageHeader } from "@/components/fyjit/creative-ui";
 import { formatBytes } from "@/lib/image-utils";
 import { createCreativeIntent, type CreativeAsset } from "@/services/api/creative";
@@ -58,7 +60,13 @@ export default function AssetsPage() {
     const [editing, setEditing] = useState<CreativeAsset>();
     const [preview, setPreview] = useState<CreativeAsset>();
     const [deleting, setDeleting] = useState<CreativeAsset>();
+    const [feedback, setFeedback] = useState<CreativeOperationFeedbackState>();
+    const [undoAsset, setUndoAsset] = useState<CreativeAsset>();
     const [projectModalOpen, setProjectModalOpen] = useState(false);
+    const showFeedback = (next: CreativeOperationFeedbackState) => {
+        setUndoAsset(undefined);
+        setFeedback(next);
+    };
     const assetsQuery = useCreativeAssetsQuery({
         page,
         pageSize,
@@ -102,6 +110,7 @@ export default function AssetsPage() {
                     },
                 });
                 message.success("素材已更新");
+                showFeedback({ type: "success", message: "素材已更新", description: "列表与素材详情已同步为最新内容。" });
             } else {
                 await createTextAsset.mutateAsync({
                     title: values.title.trim(),
@@ -112,23 +121,38 @@ export default function AssetsPage() {
                     project_id: values.project_id,
                 });
                 message.success("文本素材已保存");
+                showFeedback({ type: "success", message: "文本素材已保存", description: "新素材已加入当前素材列表。" });
             }
             setCreatingText(false);
             setEditing(undefined);
             form.resetFields();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "素材保存失败");
+            const errorMessage = error instanceof Error ? error.message : "素材保存失败";
+            message.error(errorMessage);
+            showFeedback({ type: "error", message: "素材保存失败", description: errorMessage });
         }
     };
 
     const uploadFiles = async (files?: FileList | null) => {
+        let successCount = 0;
+        const failures: string[] = [];
         for (const file of Array.from(files || [])) {
             try {
                 await uploadAsset.mutateAsync({ file, title: file.name, projectId: projectId || undefined });
                 message.success(`${file.name} 已上传`);
+                successCount += 1;
             } catch (error) {
-                message.error(`${file.name}：${error instanceof Error ? error.message : "上传失败"}`);
+                const failure = `${file.name}：${error instanceof Error ? error.message : "上传失败"}`;
+                failures.push(failure);
+                message.error(failure);
             }
+        }
+        if (successCount || failures.length) {
+            showFeedback({
+                type: failures.length ? (successCount ? "warning" : "error") : "success",
+                message: failures.length ? `上传完成：${successCount} 个成功，${failures.length} 个失败` : `已上传 ${successCount} 个素材`,
+                description: failures.length ? failures.join("；") : "上传结果已加入当前素材列表。",
+            });
         }
     };
 
@@ -142,7 +166,9 @@ export default function AssetsPage() {
         try {
             await updateAssetMutation.mutateAsync({ assetId: asset.asset_id, updates: { favorite: !asset.favorite } });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "收藏状态更新失败");
+            const errorMessage = error instanceof Error ? error.message : "收藏状态更新失败";
+            message.error(errorMessage);
+            showFeedback({ type: "error", message: "收藏状态更新失败", description: errorMessage });
         }
     };
 
@@ -150,10 +176,15 @@ export default function AssetsPage() {
         if (!deleting) return;
         try {
             await deleteAsset.mutateAsync(deleting.asset_id);
+            const deletedAsset = deleting;
             setDeleting(undefined);
             message.success("素材已移入回收站");
+            setUndoAsset(deletedAsset);
+            setFeedback({ type: "success", message: "素材已移入回收站", description: "可立即撤销，或稍后在回收站中恢复。" });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "素材删除失败");
+            const errorMessage = error instanceof Error ? error.message : "素材删除失败";
+            message.error(errorMessage);
+            showFeedback({ type: "error", message: "素材删除失败", description: errorMessage });
         }
     };
 
@@ -161,8 +192,12 @@ export default function AssetsPage() {
         try {
             await restoreAsset.mutateAsync(asset.asset_id);
             message.success("素材已恢复");
+            setUndoAsset(undefined);
+            showFeedback({ type: "success", message: "素材已恢复", description: `「${asset.title || "未命名素材"}」已返回素材中心。` });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "素材恢复失败");
+            const errorMessage = error instanceof Error ? error.message : "素材恢复失败";
+            message.error(errorMessage);
+            showFeedback({ type: "error", message: "素材恢复失败", description: errorMessage });
         }
     };
 
@@ -175,8 +210,11 @@ export default function AssetsPage() {
             setProjectModalOpen(false);
             projectForm.resetFields();
             message.success("项目已创建，后续上传和新建素材会自动归入该项目");
+            showFeedback({ type: "success", message: "项目已创建", description: "后续上传和新建素材会自动归入该项目。" });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "项目创建失败");
+            const errorMessage = error instanceof Error ? error.message : "项目创建失败";
+            message.error(errorMessage);
+            showFeedback({ type: "error", message: "项目创建失败", description: errorMessage });
         }
     };
 
@@ -191,7 +229,9 @@ export default function AssetsPage() {
             const destination = target === "film" ? "/professional-video" : target === "character" ? "/character-studio" : target;
             window.location.assign(new URL(`${destination}?intent=${encodeURIComponent(intent.id)}`, document.baseURI).toString());
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "创建继续创作意图失败");
+            const errorMessage = error instanceof Error ? error.message : "创建继续创作意图失败";
+            message.error(errorMessage);
+            showFeedback({ type: "error", message: "无法继续创作", description: errorMessage });
         }
     };
 
@@ -367,6 +407,37 @@ export default function AssetsPage() {
                             列表
                         </Button>
                     </div>
+
+                    <CreativeOperationFeedback
+                        className="mx-auto mt-6 max-w-5xl"
+                        feedback={feedback}
+                        action={
+                            undoAsset ? (
+                                <Button size="small" loading={restoreAsset.isPending} onClick={() => void restore(undoAsset)}>
+                                    撤销
+                                </Button>
+                            ) : null
+                        }
+                        onClose={() => {
+                            setFeedback(undefined);
+                            setUndoAsset(undefined);
+                        }}
+                    />
+
+                    {projectsQuery.error ? (
+                        <Alert
+                            className="mx-auto mt-6 max-w-5xl"
+                            type="warning"
+                            showIcon
+                            message="项目列表读取失败"
+                            description={projectsQuery.error instanceof Error ? projectsQuery.error.message : "暂时无法读取项目列表；仍可浏览未按项目筛选的素材。"}
+                            action={
+                                <Button size="small" loading={projectsQuery.isFetching} onClick={() => void projectsQuery.refetch()}>
+                                    重试加载
+                                </Button>
+                            }
+                        />
+                    ) : null}
 
                     {assetsQuery.error ? (
                         <Alert
@@ -547,29 +618,18 @@ function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDe
                 {asset.content || typeLabel}
             </div>
         );
-    const actions = (
-        <>
-            {trash ? (
+    const actions = trash ? (
+        <CreativeCardActionBar
+            primary={
                 <Button size="small" type="primary" icon={<RotateCcw className="size-3.5" />} onClick={onRestore}>
                     恢复
                 </Button>
-            ) : (
+            }
+        />
+    ) : (
+        <CreativeCardActionBar
+            primary={
                 <>
-                    <Button size="small" icon={<Heart className="size-3.5" fill={asset.favorite ? "currentColor" : "none"} />} onClick={onFavorite}>
-                        {asset.favorite ? "已收藏" : "收藏"}
-                    </Button>
-                    <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
-                        编辑
-                    </Button>
-                    {asset.type === "TEXT" ? (
-                        <Button size="small" icon={<Copy className="size-3.5" />} onClick={onCopy}>
-                            复制
-                        </Button>
-                    ) : asset.preview_path ? (
-                        <Button size="small" icon={<Download className="size-3.5" />} onClick={onDownload}>
-                            下载
-                        </Button>
-                    ) : null}
                     {canContinueImage ? (
                         <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={() => onContinue("image")}>
                             用于生图
@@ -590,12 +650,33 @@ function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDe
                             用于影视
                         </Button>
                     ) : null}
-                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
-                        删除
-                    </Button>
                 </>
-            )}
-        </>
+            }
+            secondary={
+                <>
+                    <Button size="small" icon={<Heart className="size-3.5" fill={asset.favorite ? "currentColor" : "none"} />} onClick={onFavorite}>
+                        {asset.favorite ? "已收藏" : "收藏"}
+                    </Button>
+                    <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
+                        编辑
+                    </Button>
+                    {asset.type === "TEXT" ? (
+                        <Button size="small" icon={<Copy className="size-3.5" />} onClick={onCopy}>
+                            复制
+                        </Button>
+                    ) : asset.preview_path ? (
+                        <Button size="small" icon={<Download className="size-3.5" />} onClick={onDownload}>
+                            下载
+                        </Button>
+                    ) : null}
+                </>
+            }
+            destructive={
+                <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
+                    删除
+                </Button>
+            }
+        />
     );
 
     if (list) {
@@ -621,7 +702,7 @@ function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDe
                                 {asset.folder_id ? ` · ${asset.folder_id}` : ""}
                             </div>
                         </button>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">{actions}</div>
+                        <div className="mt-3">{actions}</div>
                     </div>
                 </div>
             </Card>
@@ -655,7 +736,7 @@ function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDe
                     ))}
                 </div>
             </button>
-            <div className="flex flex-wrap items-center gap-2 px-4 pb-4">{actions}</div>
+            <div className="px-4 pb-4">{actions}</div>
         </Card>
     );
 }

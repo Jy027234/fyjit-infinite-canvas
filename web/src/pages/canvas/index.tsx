@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
@@ -8,6 +8,7 @@ import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
+import { CreativeOperationFeedback, type CreativeOperationFeedbackState } from "@/components/creative-operation-feedback";
 import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
@@ -19,6 +20,7 @@ export default function CanvasPage() {
     const [searchParams] = useSearchParams();
     const inputRef = useRef<HTMLInputElement>(null);
     const autoOpenRef = useRef(false);
+    const [feedback, setFeedback] = useState<CreativeOperationFeedbackState>();
     const hydrated = useCanvasStore((state) => state.hydrated);
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
@@ -52,8 +54,10 @@ export default function CanvasPage() {
             );
             await Promise.all(data.projects.map((item) => importProject(item.project)));
             message.success(`已导入 ${data.projects.length} 个画布`);
+            setFeedback({ type: "success", message: `已导入 ${data.projects.length} 个画布`, description: "导入的项目已加入画布库。" });
         } catch {
             message.error("导入失败，请选择有效的画布压缩包");
+            setFeedback({ type: "error", message: "画布导入失败", description: "请选择由无限画布导出的有效压缩包后重试。" });
         } finally {
             if (inputRef.current) inputRef.current.value = "";
         }
@@ -62,7 +66,7 @@ export default function CanvasPage() {
     useEffect(() => {
         if (!hydrated || autoOpenRef.current || (mode !== "new" && mode !== "recent")) return;
         autoOpenRef.current = true;
-        void (async () => enterProject(mode === "new" ? await createProject(`无限画布 ${projects.length + 1}`) : projects[0]?.id || await createProject(`无限画布 ${projects.length + 1}`)))();
+        void (async () => enterProject(mode === "new" ? await createProject(`无限画布 ${projects.length + 1}`) : projects[0]?.id || (await createProject(`无限画布 ${projects.length + 1}`))))();
     }, [createProject, hydrated, mode, projects]);
 
     if (hydrated && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
@@ -78,7 +82,16 @@ export default function CanvasPage() {
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
                             <>
-                                <Button disabled={!hydrated} icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects(projects.filter((project) => selectedIds.includes(project.id)), `无限画布-${selectedIds.length}个项目`)}>
+                                <Button
+                                    disabled={!hydrated}
+                                    icon={<Download className="size-4" />}
+                                    onClick={() =>
+                                        void exportCanvasProjects(
+                                            projects.filter((project) => selectedIds.includes(project.id)),
+                                            `无限画布-${selectedIds.length}个项目`,
+                                        )
+                                    }
+                                >
                                     导出选中
                                 </Button>
                                 <Button disabled={!hydrated} onClick={() => setDeleteIds(selectedIds)}>
@@ -100,6 +113,8 @@ export default function CanvasPage() {
                     </div>
                 </header>
 
+                <CreativeOperationFeedback feedback={feedback} onClose={() => setFeedback(undefined)} />
+
                 {!hydrated ? (
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
                 ) : projects.length ? (
@@ -120,7 +135,7 @@ export default function CanvasPage() {
             </div>
 
             <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importCanvas(event.target.files?.[0])} />
-            <CanvasDeleteProjectsDialog />
+            <CanvasDeleteProjectsDialog onDeleted={(count) => setFeedback({ type: "success", message: `已删除 ${count} 个画布`, description: "所选画布及其中节点、连线已移除。" })} />
         </main>
     );
 }

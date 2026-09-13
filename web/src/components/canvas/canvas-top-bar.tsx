@@ -6,6 +6,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { CreativeAccountMenu } from "@/components/layout/creative-account-menu";
 import { preloadAgentPanel } from "@/components/agent/agent-panel";
+import { preloadCanvasPluginManager } from "@/components/canvas/deferred-canvas-tools";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useCanvasStore, type CanvasSyncStatus } from "@/stores/canvas/use-canvas-store";
@@ -188,7 +189,7 @@ export function CanvasTopBar({
                     </Tooltip>
                     <CreativeAccountMenu variant="compact" showTheme triggerStyle={{ color: theme.node.text }} beforeLeave={onNavigateAway} />
                     <div className="hidden sm:block">
-                        <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
+                        <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} onPreparePlugins={preloadCanvasPluginManager} />
                     </div>
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button

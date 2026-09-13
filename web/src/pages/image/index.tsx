@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, ClipboardPaste, Download, FolderPlus, GitCompare, ImagePlus, PenLine, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Drawer, Image, Input, Modal, Segmented, Tag, Tooltip, Typography } from "antd";
+import { Alert, App, Button, Drawer, Image, Input, Modal, Segmented, Tag, Tooltip, Typography } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import { saveAs } from "file-saver";
 
@@ -9,6 +9,8 @@ import { CreativeEstimateSummary } from "@/components/creative-estimate-summary"
 import { CreativeGenerationStatus, creativeJobPendingSnapshot, summarizeCreativePendingResults, type CreativeGenerationPhase } from "@/components/creative-generation-status";
 import { CreativeHistoryPanel } from "@/components/creative-history-panel";
 import { CreativeReadinessNotice } from "@/components/creative-readiness-notice";
+import { CreativeCardActionBar } from "@/components/creative-card-action-bar";
+import { CreativeOperationFeedback } from "@/components/creative-operation-feedback";
 import { CreativeResultCardShell } from "@/components/creative-result-card-shell";
 import { creativeJobStatusLabel, CreativeStatusTag, type CreativeHistoryStatus } from "@/components/creative-status-tag";
 import {
@@ -31,6 +33,7 @@ import { ReferencePromptMentions } from "@/components/reference-prompt-mentions"
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { FyjitEmptyState, FyjitTaskStatus } from "@/components/fyjit/creative-ui";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { startCreativeMetric } from "@/lib/analytics";
 import { randomId } from "@/lib/utils";
 import { buildImageReferencePromptText, imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -167,6 +170,8 @@ export default function ImagePage() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [referenceRecoveryNotice, setReferenceRecoveryNotice] = useState<{ type: "warning" | "error"; message: string; description: string }>();
+    const [handoffFailure, setHandoffFailure] = useState<{ message: string; image: GeneratedImage }>();
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
@@ -267,7 +272,11 @@ export default function ImagePage() {
                         ].slice(0, maxImageReferences),
                     ),
                 )
-                .catch((error) => message.error(error instanceof Error ? error.message : "创作素材恢复失败"));
+                .catch((error) => {
+                    const errorMessage = error instanceof Error ? error.message : "创作素材恢复失败";
+                    message.error(errorMessage);
+                    setReferenceRecoveryNotice({ type: "error", message: "创作素材恢复失败", description: errorMessage });
+                });
         }
     }, [activeIntent, message]);
 
@@ -329,7 +338,11 @@ export default function ImagePage() {
                 if (cancelled) return;
                 const restoredReferences = assets.filter((asset): asset is ReferenceImage => Boolean(asset));
                 setReferences(restoredReferences.slice(0, draftMaxImageReferences));
-                if (restoredReferences.length !== draft.references.length) message.info("草稿中的部分参考素材已失效，请重新选择");
+                if (restoredReferences.length !== draft.references.length) {
+                    const missingCount = draft.references.length - restoredReferences.length;
+                    message.info("草稿中的部分参考素材已失效，请重新选择");
+                    setReferenceRecoveryNotice({ type: "warning", message: `${missingCount} 个参考素材已失效`, description: "可继续使用已恢复素材，或从素材中心重新选择。" });
+                }
             }
             if (!cancelled) {
                 draftScopeRef.current = scope;
@@ -416,6 +429,7 @@ export default function ImagePage() {
     };
 
     const generate = async () => {
+        const finishJobAcceptedMetric = startCreativeMetric("job_accepted", "creative.image");
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
         const text = prompt.trim();
@@ -476,8 +490,12 @@ export default function ImagePage() {
             const outcomes = await Promise.all(
                 resultIds.map(async (resultId, index) => {
                     try {
-                        const submitted = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters, (job) =>
-                            setResults((value) => updateResultById(value, resultId, { ...creativeJobPendingSnapshot(job.status, job.progress), error: undefined })),
+                        const submitted = await submitImageJob(
+                            snapshot,
+                            referenceAssetIds,
+                            checkedEstimate.normalized_parameters,
+                            (job) => setResults((value) => updateResultById(value, resultId, { ...creativeJobPendingSnapshot(job.status, job.progress), error: undefined })),
+                            finishJobAcceptedMetric,
                         );
                         if (submitted.kind === "asset-detail-error") {
                             setResults((value) =>
@@ -562,10 +580,13 @@ export default function ImagePage() {
 
     const sendResultToVideo = async (image: GeneratedImage) => {
         try {
+            setHandoffFailure(undefined);
             const intent = await createCreativeIntent("video", { prompt: prompt.trim(), negative_prompt: negativePrompt.trim() || undefined, asset_ids: [image.id] });
             window.location.assign(new URL(`video?intent=${encodeURIComponent(intent.id)}`, document.baseURI).toString());
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "无法送入视频创作台");
+            const errorMessage = error instanceof Error ? error.message : "无法送入视频创作台";
+            message.error(errorMessage);
+            setHandoffFailure({ message: errorMessage, image });
         }
     };
 
@@ -793,6 +814,7 @@ export default function ImagePage() {
         referenceAssetIds: string[],
         normalizedParameters: Record<string, unknown>,
         onStatus: (job: CreativeJob) => void,
+        onAccepted?: () => void,
     ): Promise<ImageSubmitResult> => {
         const requestStartedAt = performance.now();
         const job = await createCreativeJob({
@@ -807,6 +829,7 @@ export default function ImagePage() {
             reference_asset_ids: referenceAssetIds,
             idempotency_key: randomId(),
         });
+        onAccepted?.();
         onStatus(job);
         draftWriteRevisionRef.current += 1;
         await clearCreativeDraft(currentUserId, "image", projectId);
@@ -965,6 +988,7 @@ export default function ImagePage() {
                                 <Input.TextArea
                                     id="image-prompt"
                                     name="image_prompt"
+                                    data-fyjit-performance-ready="workbench-input"
                                     ref={promptInputRef}
                                     value={prompt}
                                     onChange={(event) => setPrompt(event.target.value)}
@@ -996,6 +1020,22 @@ export default function ImagePage() {
                                             </Button>
                                         </div>
                                     </div>
+                                    {referenceRecoveryNotice ? (
+                                        <Alert
+                                            className="mb-3"
+                                            type={referenceRecoveryNotice.type}
+                                            showIcon
+                                            closable
+                                            message={referenceRecoveryNotice.message}
+                                            description={referenceRecoveryNotice.description}
+                                            action={
+                                                <Button size="small" onClick={() => setAssetPickerOpen(true)}>
+                                                    重新选择
+                                                </Button>
+                                            }
+                                            onClose={() => setReferenceRecoveryNotice(undefined)}
+                                        />
+                                    ) : null}
                                     <div
                                         className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${isReferenceDragActive ? "border-primary bg-accent" : "border-border"}`}
                                         onDragEnter={(event) => {
@@ -1084,6 +1124,18 @@ export default function ImagePage() {
                     </CreativeWorkbenchComposer>
 
                     <CreativeWorkbenchResult status={running && pendingSummary ? <CreativeGenerationStatus {...pendingSummary} elapsedMs={elapsedMs} /> : null}>
+                        <CreativeOperationFeedback
+                            className="mb-4"
+                            feedback={handoffFailure ? { type: "error", message: "无法送入视频创作台", description: handoffFailure.message } : undefined}
+                            action={
+                                handoffFailure ? (
+                                    <Button size="small" onClick={() => void sendResultToVideo(handoffFailure.image)}>
+                                        重试送入
+                                    </Button>
+                                ) : null
+                            }
+                            onClose={() => setHandoffFailure(undefined)}
+                        />
                         {previewLog ? (
                             <CreativeDraftNotice
                                 tone="preview"
@@ -1300,33 +1352,37 @@ function ResultImageCard({
                         <span>{formatBytes(image.bytes)}</span>
                         <span>{formatDuration(image.durationMs)}</span>
                     </div>
-                    <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-success">已保存到素材中心</span>
-                    </div>
-                    <div className="grid min-w-0 grid-cols-2 gap-2">
-                        <Tooltip title="加入参考图">
-                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
-                                加入参考图
-                            </Button>
-                        </Tooltip>
-                        <Tooltip title="下载">
-                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
-                                下载
-                            </Button>
-                        </Tooltip>
-                        {compareImage ? (
-                            <Tooltip title="与首张参考图对比">
-                                <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<GitCompare className="size-3.5" />} onClick={() => onCompare(compareImage, image.dataUrl)}>
-                                    前后对比
+                    <CreativeCardActionBar
+                        status={<span className="text-xs text-success">已保存到素材中心</span>}
+                        primary={
+                            <Tooltip title="加入参考图">
+                                <Button type="primary" className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
+                                    加入参考图
                                 </Button>
                             </Tooltip>
-                        ) : null}
-                        <Tooltip title="送入视频创作台">
-                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<VideoIcon className="size-3.5" />} onClick={() => void onSendToVideo(image)}>
-                                送入视频
-                            </Button>
-                        </Tooltip>
-                    </div>
+                        }
+                        secondary={
+                            <>
+                                <Tooltip title="下载">
+                                    <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
+                                        下载
+                                    </Button>
+                                </Tooltip>
+                                {compareImage ? (
+                                    <Tooltip title="与首张参考图对比">
+                                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<GitCompare className="size-3.5" />} onClick={() => onCompare(compareImage, image.dataUrl)}>
+                                            前后对比
+                                        </Button>
+                                    </Tooltip>
+                                ) : null}
+                                <Tooltip title="送入视频创作台">
+                                    <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<VideoIcon className="size-3.5" />} onClick={() => void onSendToVideo(image)}>
+                                        送入视频
+                                    </Button>
+                                </Tooltip>
+                            </>
+                        }
+                    />
                 </>
             }
         />

@@ -40,6 +40,7 @@ function localPluginsManifest(): Plugin {
 
 export default defineConfig({
     base: process.env.VITE_BASE || "/creative/",
+    build: { manifest: true },
     plugins: [react(), localPluginsManifest()],
     resolve: {
         alias: {

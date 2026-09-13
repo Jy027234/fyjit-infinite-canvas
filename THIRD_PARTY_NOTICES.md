@@ -316,6 +316,7 @@ OS/architecture-specific optional packages are normalized to their parent projec
 | @types/file-saver | 2.0.7 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/geojson | 7946.0.16 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/hast | 2.3.10 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
+| @types/hast | 3.0.4 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/hast | 3.0.5 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/mdast | 3.0.15 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/mdast | 4.0.4 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
@@ -952,6 +953,7 @@ OS/architecture-specific optional packages are normalized to their parent projec
 | w3c-keyname | 2.2.8 | MIT | [source](https://github.com/marijnh/w3c-keyname) |
 | web-namespaces | 2.0.1 | MIT | [source](wooorm/web-namespaces) |
 | web-streams-polyfill | 3.3.3 | MIT | [source](https://github.com/MattiasBuelens/web-streams-polyfill) |
+| web-vitals | 6.2.1 | Apache-2.0 | [source](https://github.com/GoogleChrome/web-vitals) |
 | which | 2.0.2 | ISC | [source](https://github.com/isaacs/node-which) |
 | which | 4.0.0 | ISC | [source](https://github.com/npm/node-which) |
 | wrap-ansi | 7.0.0 | MIT | [source](chalk/wrap-ansi) |

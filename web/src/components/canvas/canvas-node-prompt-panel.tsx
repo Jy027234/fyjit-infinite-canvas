@@ -3,6 +3,7 @@ import { ArrowUp, LoaderCircle, Plus, Square } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
+import { preloadCanvasAssetPicker } from "@/components/canvas/deferred-canvas-tools";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -70,7 +71,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         >
             {supportsReferences && onAddReference ? (
                 <div className="mb-2 flex items-center gap-2 px-1">
-                    <Button type="text" size="small" icon={<Plus className="size-3.5" />} onClick={() => onAddReference(node.id)}>
+                    <Button type="text" size="small" icon={<Plus className="size-3.5" />} onPointerEnter={preloadCanvasAssetPicker} onFocus={preloadCanvasAssetPicker} onClick={() => onAddReference(node.id)}>
                         添加参考图
                     </Button>
                     <span className="text-xs opacity-60">关联人设、背景或道具图片后，可在提示词中输入 @ 精确引用。</span>

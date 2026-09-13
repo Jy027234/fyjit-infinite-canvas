@@ -1,4 +1,4 @@
-import { App, Button, Empty, Modal, Space, Table, Tag } from "antd";
+import { Alert, App, Button, Empty, Modal, Space, Table, Tag } from "antd";
 import { Copy, Flag, FolderPlus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -15,6 +15,8 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     const [loading, setLoading] = useState(false);
     const [detail, setDetail] = useState<Prompt | null>(null);
     const [reporting, setReporting] = useState<Prompt | null>(null);
+    const [loadError, setLoadError] = useState("");
+    const [savedAssetIds, setSavedAssetIds] = useState<Set<string>>(() => new Set());
     const copyText = useCopyText();
     const addAsset = useAssetStore((state) => state.addAsset);
 
@@ -22,10 +24,13 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
         async (force: boolean) => {
             if (!source) return;
             setLoading(true);
+            setLoadError("");
             try {
                 setItems(force ? await refreshSourceItems(source.id) : await fetchSourcePrompts(source.id));
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "拉取提示词失败");
+                const errorMessage = error instanceof Error ? error.message : "拉取提示词失败";
+                message.error(errorMessage);
+                setLoadError(errorMessage);
             } finally {
                 setLoading(false);
             }
@@ -34,8 +39,14 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
     );
 
     useEffect(() => {
-        if (source) void load(false);
-        else setItems([]);
+        if (source) {
+            setSavedAssetIds(new Set());
+            void load(false);
+        } else {
+            setItems([]);
+            setLoadError("");
+            setSavedAssetIds(new Set());
+        }
     }, [source, load]);
 
     const saveAsset = (item: Prompt) => {
@@ -56,6 +67,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
             },
         });
         message.success("已加入我的资产");
+        setSavedAssetIds((current) => new Set(current).add(item.id));
     };
 
     return (
@@ -77,6 +89,20 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                     </div>
                 }
             >
+                {loadError ? (
+                    <Alert
+                        className="mb-4"
+                        type="error"
+                        showIcon
+                        message="提示词来源读取失败"
+                        description={loadError}
+                        action={
+                            <Button size="small" loading={loading} onClick={() => void load(false)}>
+                                重试
+                            </Button>
+                        }
+                    />
+                ) : null}
                 <Table<Prompt>
                     rowKey="id"
                     size="small"
@@ -127,8 +153,8 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                                     <Button size="small" type="text" onClick={() => setDetail(item)}>
                                         详情
                                     </Button>
-                                    <Button size="small" type="text" icon={<FolderPlus className="size-3.5" />} onClick={() => saveAsset(item)}>
-                                        加入资产
+                                    <Button size="small" type="text" disabled={savedAssetIds.has(item.id)} icon={<FolderPlus className="size-3.5" />} onClick={() => saveAsset(item)}>
+                                        {savedAssetIds.has(item.id) ? "已加入" : "加入资产"}
                                     </Button>
                                     <Button size="small" type="text" danger icon={<Flag className="size-3.5" />} onClick={() => setReporting(item)}>
                                         举报
