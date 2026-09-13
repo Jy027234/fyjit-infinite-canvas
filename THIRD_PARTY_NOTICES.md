@@ -316,7 +316,6 @@ OS/architecture-specific optional packages are normalized to their parent projec
 | @types/file-saver | 2.0.7 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/geojson | 7946.0.16 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/hast | 2.3.10 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
-| @types/hast | 3.0.4 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/hast | 3.0.5 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/mdast | 3.0.15 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
 | @types/mdast | 4.0.4 | MIT | [source](https://github.com/DefinitelyTyped/DefinitelyTyped) |
