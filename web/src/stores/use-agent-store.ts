@@ -4,7 +4,22 @@ import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-age
 
 export type AgentChatRole = "user" | "assistant" | "system" | "tool" | "error";
 export type AgentAttachment = { id: string; name: string; type: string; size: number; width: number; height: number; url: string; dataUrl: string };
-export type AgentChatItem = { id: string; itemId?: string; clientMessageId?: string; threadId?: string; turnId?: string; role: AgentChatRole; title?: string; text: string; historyText?: string; meta?: string; detail?: unknown; attachments?: AgentAttachment[]; streamId?: string; activityItems?: Record<string, string> };
+export type AgentChatItem = {
+    id: string;
+    itemId?: string;
+    clientMessageId?: string;
+    threadId?: string;
+    turnId?: string;
+    role: AgentChatRole;
+    title?: string;
+    text: string;
+    historyText?: string;
+    meta?: string;
+    detail?: unknown;
+    attachments?: AgentAttachment[];
+    streamId?: string;
+    activityItems?: Record<string, string>;
+};
 export type AgentEventLog = { id: string; time: string; title: string; text: string; raw?: unknown };
 export type AgentPendingToolCall = { requestId: string; name: string; input?: { ops?: CanvasAgentOp[]; path?: string } & Record<string, unknown> };
 export type AgentPermissionMode = "request" | "automatic" | "full";
@@ -18,14 +33,26 @@ export type AgentModel = {
     isDefault?: boolean;
 };
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline";
-export type AgentPendingApproval = { requestId: string; method: string; threadId?: string; turnId?: string; itemId?: string; reason?: string; command?: unknown; cwd?: string; grantRoot?: string; networkApprovalContext?: unknown; permissions?: unknown; deciding?: AgentApprovalDecision };
+export type AgentPendingApproval = {
+    requestId: string;
+    method: string;
+    threadId?: string;
+    turnId?: string;
+    itemId?: string;
+    reason?: string;
+    command?: unknown;
+    cwd?: string;
+    grantRoot?: string;
+    networkApprovalContext?: unknown;
+    permissions?: unknown;
+    deciding?: AgentApprovalDecision;
+};
 export type AgentCanvasContext = { snapshot: CanvasAgentSnapshot; applyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot; undoOps: () => CanvasAgentSnapshot | null; canUndo: boolean };
 export type AgentThreadSummary = { id: string; preview: string; name?: string | null; cwd?: string; status?: string; source?: unknown; createdAt?: number; updatedAt?: number };
 export type AgentTokenUsage = { input: number; cached: number; output: number };
 export type AgentBootstrapStatus = { key: string; text: string; detail: string; status: "running" | "ready" | "error" };
 export type AgentPanelTab = "chat" | "setup" | "history" | "log";
 
-const CONNECT_TIMEOUT_MS = 6000;
 let agentSource: EventSource | null = null;
 let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -81,7 +108,8 @@ export const CANVAS_AGENT_PANEL_MOTION_MS = 500;
 export const useAgentStore = create<AgentStore>((set, get) => ({
     width: typeof window === "undefined" ? 440 : Number(localStorage.getItem("canvas-agent-panel-width")) || 440,
     panelOpen: false,
-    panelMounted: true,
+    // Agent 面板是非首屏能力，首次打开前不挂载重组件。
+    panelMounted: false,
     panelClosing: false,
     canvasContext: null,
     url: typeof window === "undefined" ? "http://127.0.0.1:17371" : localStorage.getItem("canvas-agent-url") || "http://127.0.0.1:17371",

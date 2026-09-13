@@ -16,10 +16,11 @@ export function useCreativeEstimate(request: CreativeEstimateRequest | null, del
             return;
         }
 
+        setEstimate(null);
+        setLoading(true);
+        setError(undefined);
         const controller = new AbortController();
         const timer = window.setTimeout(() => {
-            setLoading(true);
-            setError(undefined);
             void estimateCreativeJob(JSON.parse(requestKey) as CreativeEstimateRequest, controller.signal)
                 .then((response) => setEstimate(response))
                 .catch((requestError) => {

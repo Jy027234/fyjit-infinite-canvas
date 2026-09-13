@@ -35,3 +35,13 @@ export const CREATIVE_API_BASE = read("CREATIVE_API_BASE", import.meta.env.VITE_
 export const FYJIT_HOME_URL = read("FYJIT_HOME_URL", import.meta.env.VITE_FYJIT_HOME_URL, "/");
 export const SOURCE_COMMIT = read("SOURCE_COMMIT", import.meta.env.VITE_SOURCE_COMMIT, "unknown");
 export const SOURCE_URL = read("SOURCE_URL", import.meta.env.VITE_SOURCE_URL);
+
+export function resolveFyjitMainUrl(path: string, homeUrl = FYJIT_HOME_URL, origin = typeof window !== "undefined" ? window.location.origin : "https://fyjit.local") {
+    const normalizedPath = `/${path.replace(/^\/+/, "")}`;
+    try {
+        const home = new URL(homeUrl, origin);
+        return new URL(normalizedPath, home.origin).toString();
+    } catch {
+        return normalizedPath;
+    }
+}

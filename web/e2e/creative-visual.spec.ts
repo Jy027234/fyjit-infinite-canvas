@@ -14,6 +14,7 @@ for (const viewport of viewports) {
         await prepareCreativePage(page, viewport);
         await page.goto("/creative/image");
         await expect(page.getByRole("heading", { name: "生图工作台", exact: true })).toBeVisible();
+        await expect(page.getByText("预计 $0.0200 · 2,000 配额")).toBeAttached();
         await expectNoPageOverflow(page);
         await expect(page).toHaveScreenshot(`image-${viewport.name}.png`, { animations: "disabled", fullPage: true });
         await expectPrimaryGenerateActionReachable(page);
@@ -79,15 +80,34 @@ test("keyboard focus, target size, and reduced motion remain usable", async ({ p
 });
 
 test("account menu exposes sign out on desktop and mobile", async ({ page }) => {
+    let logoutRequests = 0;
     await prepareCreativePage(page, viewports[3]);
+    await page.route("**/api/user/logout", async (route) => {
+        logoutRequests += 1;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+    });
     await page.goto("/creative/image");
     await page.getByRole("button", { name: "用户菜单" }).click();
-    await expect(page.getByText("退出登录", { exact: true })).toBeVisible();
-    await page.keyboard.press("Escape");
+    const accountMenu = page.getByRole("dialog", { name: "用户菜单" });
+    await expect(accountMenu).toBeInViewport();
+    await expect(accountMenu.getByRole("link", { name: "个人资料" })).toHaveAttribute("href", /\/profile$/);
+    await expect(accountMenu.getByRole("link", { name: "钱包" })).toHaveAttribute("href", /\/wallet$/);
+    await accountMenu.getByRole("button", { name: "退出登录", exact: true }).click();
+    const desktopConfirm = page.getByRole("dialog", { name: "退出登录？" });
+    await expect(desktopConfirm.getByText("退出后需要重新登录才能继续使用创作中心。", { exact: true })).toBeVisible();
+    await desktopConfirm.getByRole("button", { name: /取\s*消/ }).click();
+    expect(logoutRequests).toBe(0);
 
     await page.setViewportSize(viewports[0]);
     await page.getByRole("button", { name: "打开导航菜单" }).click();
+    await expect(page.getByRole("link", { name: "个人资料" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "钱包" })).toBeVisible();
     await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+    await page.getByRole("button", { name: "退出登录" }).click();
+    const mobileConfirm = page.getByRole("dialog", { name: "退出登录？" });
+    await mobileConfirm.getByRole("button", { name: /退出\s*登录/ }).click();
+    await expect.poll(() => logoutRequests).toBe(1);
+    await expect(page).toHaveURL(/\/sign-in\?redirect=%2Fcreative%2Fimage$/);
 });
 
 test("shell shares FYJIT language and theme preferences", async ({ page }) => {
@@ -120,9 +140,229 @@ test("workbenches expose the server-side estimate and normalized request summary
     await expect(page.getByText("预计 $0.0200 · 2,000 配额")).toBeAttached();
     await expect(page.getByText("Token：自动创作 Token (#7)")).toBeAttached();
 
-    await page.goto("/creative/video");
+    await page.getByRole("link", { name: "视频创作台" }).click();
     await expect(page.getByText("预计 $0.1200 · 12,000 配额")).toBeAttached();
     await expect(page.getByText(/时长限制 1–120 秒/)).toBeAttached();
+});
+
+test("optional creative resources load only for routes that need them", async ({ page }) => {
+    const optionalRequests: string[] = [];
+    page.on("request", (request) => {
+        const path = new URL(request.url()).pathname;
+        if (["/api/creative/capabilities", "/api/creative/models", "/api/creative/tokens"].includes(path)) optionalRequests.push(path);
+    });
+    await prepareCreativePage(page, viewports[3]);
+
+    await page.goto("/creative/assets");
+    await expect(page.getByRole("heading", { name: "素材中心", exact: true })).toBeVisible();
+    expect(optionalRequests).toEqual([]);
+
+    await page.goto("/creative/prompts");
+    await expect(page.getByRole("heading", { name: "提示词库", exact: true })).toBeVisible();
+    expect(optionalRequests).toEqual([]);
+
+    await page.goto("/creative/image");
+    await expect(page.getByRole("heading", { name: "生图工作台", exact: true })).toBeVisible();
+    await expect.poll(() => new Set(optionalRequests)).toEqual(new Set(["/api/creative/capabilities", "/api/creative/models", "/api/creative/tokens"]));
+
+    await page.getByRole("link", { name: "视频创作台" }).click();
+    await expect(page.getByRole("heading", { name: "视频创作台", exact: true })).toBeVisible();
+    await expect.poll(() => optionalRequests.length).toBe(3);
+});
+
+test("workbench pickers reuse the shared asset and prompt query caches", async ({ page }) => {
+    let assetListRequests = 0;
+    let promptListRequests = 0;
+    page.on("request", (request) => {
+        if (request.method() !== "GET") return;
+        const url = new URL(request.url());
+        if (url.pathname === "/api/creative/assets") assetListRequests += 1;
+        if (url.pathname === "/api/creative/prompts") promptListRequests += 1;
+    });
+    await prepareCreativePage(page, viewports[3]);
+    await page.goto("/creative/image");
+
+    await page.getByRole("button", { name: "查看我的资产" }).click();
+    await expect(page.getByRole("dialog", { name: "选择 FYJIT 素材" })).toBeVisible();
+    await expect.poll(() => assetListRequests).toBe(1);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "查看我的资产" }).click();
+    await expect(page.getByRole("dialog", { name: "选择 FYJIT 素材" })).toBeVisible();
+    await expect.poll(() => assetListRequests).toBe(1);
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "查看提示词库" }).click();
+    await expect(page.getByRole("dialog", { name: "FYJIT 提示词库" })).toBeVisible();
+    await expect.poll(() => promptListRequests).toBe(1);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "查看提示词库" }).click();
+    await expect(page.getByRole("dialog", { name: "FYJIT 提示词库" })).toBeVisible();
+    await expect.poll(() => promptListRequests).toBe(1);
+});
+
+test("prompt picker keeps request failures inline and validates required variables", async ({ page }) => {
+    let promptRequests = 0;
+    await prepareCreativePage(page, viewports[3]);
+    await page.route("**/api/creative/prompts**", async (route) => {
+        promptRequests += 1;
+        if (promptRequests === 1) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ success: false, message: "提示词服务暂时不可用" }) });
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    items: [
+                        {
+                            prompt_id: "variable-prompt",
+                            user_id: 0,
+                            title: "变量化广告图",
+                            content: "为 {{subject}} 设计电影感广告图",
+                            negative_prompt: "{{subject}} 模糊、文字水印",
+                            prompt_type: "image",
+                            category: "image",
+                            tags: [],
+                            variables: [{ name: "subject", label: "产品", required: true, default: "" }],
+                            version: 1,
+                            catalog: true,
+                            favorite: false,
+                            created_at: 1785700000,
+                            updated_at: 1785700000,
+                        },
+                    ],
+                    total: 1,
+                    page: 1,
+                    page_size: 12,
+                },
+            }),
+        });
+    });
+
+    await page.goto("/creative/image");
+    await page.getByRole("button", { name: "查看提示词库" }).click();
+    const picker = page.getByRole("dialog", { name: "FYJIT 提示词库" });
+    await expect(picker.getByText("提示词服务暂时不可用", { exact: true })).toBeVisible();
+    await expect(picker.getByText("没有找到匹配的提示词", { exact: true })).toHaveCount(0);
+    await picker.getByRole("button", { name: /重\s*试/ }).click();
+    const promptChoice = picker.getByRole("button", { name: "选择提示词：变量化广告图" });
+    await promptChoice.focus();
+    await expect(promptChoice).toBeFocused();
+    await promptChoice.press("Enter");
+
+    const variables = page.getByRole("dialog", { name: "填写变量 · 变量化广告图" });
+    await variables.getByRole("button", { name: "使用最终提示词" }).click();
+    await expect(variables).toBeVisible();
+    await expect(variables.getByText("此变量为必填项", { exact: true })).toBeVisible();
+    await variables.getByRole("textbox").fill("户外咖啡机");
+    await variables.getByRole("button", { name: "使用最终提示词" }).click();
+    await expect(page.locator("textarea").nth(0)).toHaveValue("为 户外咖啡机 设计电影感广告图");
+    await expect(page.locator("textarea").nth(1)).toHaveValue("户外咖啡机 模糊、文字水印");
+});
+
+test("video asset picker inserts an existing audio asset when the model supports it", async ({ page }) => {
+    const models = structuredClone(creativeFixture("/models")) as Array<{ id: string; capability_profiles: { video_generation?: { max_reference_audio: number } } }>;
+    const videoModel = models.find((model) => model.id === "fyjit-visual-video");
+    if (!videoModel?.capability_profiles.video_generation) throw new Error("Missing video fixture");
+    videoModel.capability_profiles.video_generation.max_reference_audio = 1;
+    await prepareCreativePage(page, viewports[3], { models });
+    await page.route("**/api/creative/assets**", async (route) => {
+        const asset = {
+            asset_id: "audio-rain",
+            user_id: 1001,
+            type: "AUDIO",
+            title: "夜雨环境音",
+            status: "READY",
+            source_module: "creative-assets",
+            preview_path: "/api/creative/assets/audio-rain/content",
+            mime_type: "audio/mpeg",
+            duration: 12,
+            size_bytes: 245760,
+            created_at: 1785700000,
+            updated_at: 1785700000,
+        };
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [asset], total: 1, page: 1, page_size: 12 } }) });
+    });
+
+    await page.goto("/creative/video");
+    await page.getByRole("button", { name: "查看我的资产" }).click();
+    const picker = page.getByRole("dialog", { name: "选择 FYJIT 素材" });
+    await expect(picker.getByText(/最多 1 个参考音频/)).toBeVisible();
+    await picker.getByRole("button", { name: /夜雨环境音/ }).click();
+    await picker.getByRole("button", { name: "插入所选素材" }).click();
+    await expect(page.getByText("参考音频", { exact: true })).toBeVisible();
+    await expect(page.locator("#creative-main").getByText("夜雨环境音", { exact: true })).toBeVisible();
+});
+
+test("video asset picker rejects an existing audio asset outside the supported duration", async ({ page }) => {
+    const models = structuredClone(creativeFixture("/models")) as Array<{ id: string; capability_profiles: { video_generation?: { max_reference_audio: number } } }>;
+    const videoModel = models.find((model) => model.id === "fyjit-visual-video");
+    if (!videoModel?.capability_profiles.video_generation) throw new Error("Missing video fixture");
+    videoModel.capability_profiles.video_generation.max_reference_audio = 1;
+    await prepareCreativePage(page, viewports[3], { models });
+    await page.route("**/api/creative/assets**", async (route) => {
+        const asset = {
+            asset_id: "audio-too-long",
+            user_id: 1001,
+            type: "AUDIO",
+            title: "过长环境音",
+            status: "READY",
+            source_module: "creative-assets",
+            preview_path: "/api/creative/assets/audio-too-long/content",
+            mime_type: "audio/mpeg",
+            duration: 20,
+            size_bytes: 245760,
+            created_at: 1785700000,
+            updated_at: 1785700000,
+        };
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [asset], total: 1, page: 1, page_size: 12 } }) });
+    });
+
+    await page.goto("/creative/video");
+    await page.getByRole("button", { name: "查看我的资产" }).click();
+    const picker = page.getByRole("dialog", { name: "选择 FYJIT 素材" });
+    await picker.getByRole("button", { name: /过长环境音/ }).click();
+    await picker.getByRole("button", { name: "插入所选素材" }).click();
+    await expect(page.getByText("已忽略不符合时长要求的参考音频：单个 2-15 秒，总时长不超过 15 秒", { exact: true })).toBeVisible();
+    await expect(picker).toBeVisible();
+    await expect(page.locator("#creative-main").getByText("过长环境音", { exact: true })).toHaveCount(0);
+});
+
+test("audio assets can continue from the asset center into the video workbench", async ({ page }) => {
+    const models = structuredClone(creativeFixture("/models")) as Array<{ id: string; capability_profiles: { video_generation?: { max_reference_audio: number } } }>;
+    const videoModel = models.find((model) => model.id === "fyjit-visual-video");
+    if (!videoModel?.capability_profiles.video_generation) throw new Error("Missing video fixture");
+    videoModel.capability_profiles.video_generation.max_reference_audio = 1;
+    const audioAsset = {
+        asset_id: "audio-continue",
+        user_id: 1001,
+        type: "AUDIO",
+        title: "海浪环境音",
+        status: "READY",
+        source_module: "creative-assets",
+        preview_path: "/api/creative/assets/audio-continue/content",
+        mime_type: "audio/mpeg",
+        duration: 8,
+        size_bytes: 245760,
+        created_at: 1785700000,
+        updated_at: 1785700000,
+    };
+    await prepareCreativePage(page, viewports[3], { models });
+    await page.route("**/api/creative/assets**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        const data = path === "/api/creative/assets" ? { items: [audioAsset], total: 1, page: 1, page_size: 24 } : audioAsset;
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data }) });
+    });
+    await page.route("**/api/creative/intents**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        const data = path.endsWith("/consume") ? { id: "audio-to-video", kind: "video", payload: { asset_ids: [audioAsset.asset_id] }, expires_at: 1785700300, consumed_at: 1785700001 } : { id: "audio-to-video", kind: "video", expires_at: 1785700300 };
+        return route.fulfill({ status: path.endsWith("/consume") ? 200 : 201, contentType: "application/json", body: JSON.stringify({ success: true, data }) });
+    });
+
+    await page.goto("/creative/assets");
+    await page.getByRole("button", { name: "用于视频" }).click();
+    await expect(page).toHaveURL(/\/creative\/video/);
+    await expect(page.getByText("参考音频", { exact: true })).toBeVisible();
+    await expect(page.getByText("海浪环境音", { exact: true })).toBeVisible();
 });
 
 test("video controls follow server capabilities and desktop panel preferences persist", async ({ page }) => {
@@ -145,6 +385,7 @@ test("video controls follow server capabilities and desktop panel preferences pe
 test("image batches create independently settled jobs and preserve negative prompts", async ({ page }) => {
     await prepareCreativePage(page, viewports[3]);
     const jobRequests: Array<{ negative_prompt?: string; parameters?: Record<string, unknown> }> = [];
+    let jobListRequests = 0;
     await page.route("**/api/creative/jobs**", async (route) => {
         const url = new URL(route.request().url());
         const relativePath = url.pathname.replace(/^\/api\/creative/, "");
@@ -159,6 +400,7 @@ test("image batches create independently settled jobs and preserve negative prom
             const index = Number(match[1]);
             return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: creativeJobFixture(index, index === 2 ? "FAILED" : "SUCCEEDED") }) });
         }
+        if (route.request().method() === "GET" && relativePath === "/jobs") jobListRequests += 1;
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [], total: 0, page: 1, page_size: 100 } }) });
     });
     await page.route("**/api/creative/assets/result-*", (route) => {
@@ -191,6 +433,8 @@ test("image batches create independently settled jobs and preserve negative prom
     await textareas.nth(0).fill("独立候选测试");
     await textareas.nth(1).fill("不要文字水印");
     await page.getByRole("button", { name: "2 张" }).click();
+    const jobListRequestsBeforeGeneration = jobListRequests;
+    expect(jobListRequestsBeforeGeneration).toBe(1);
     await page.getByRole("button", { name: "开始生成", exact: true }).click();
     await expect.poll(() => jobRequests.length).toBe(2);
     expect(jobRequests).toEqual([
@@ -200,6 +444,196 @@ test("image batches create independently settled jobs and preserve negative prom
     await expect(page.getByText("生成结果已由 FYJIT 自动保存到素材中心")).toHaveCount(0);
     await expect(page.locator(".ant-image")).toHaveCount(1);
     await expect(page.getByText("生成失败", { exact: true })).toBeVisible();
+    expect(jobListRequests).toBe(jobListRequestsBeforeGeneration);
+});
+
+test("completed image jobs retry asset details without creating a new job", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    let jobPosts = 0;
+    let assetDetailRequests = 0;
+    let detailReady = false;
+    const completedJob = { ...creativeJobFixture(71, "SUCCEEDED"), result_asset_ids: ["detail-retry-image"] };
+
+    await page.route("**/api/creative/jobs**", async (route) => {
+        const url = new URL(route.request().url());
+        const relativePath = url.pathname.replace(/^\/api\/creative/, "");
+        if (route.request().method() === "POST" && relativePath === "/jobs") {
+            jobPosts += 1;
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: completedJob }) });
+        }
+        if (relativePath === "/jobs/job-71") {
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: completedJob }) });
+        }
+        if (route.request().method() === "GET" && relativePath === "/jobs") {
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [], total: 0, page: 1, page_size: 20 } }) });
+        }
+        return route.fallback();
+    });
+    await page.route("**/api/creative/assets/detail-retry-image", async (route) => {
+        assetDetailRequests += 1;
+        if (!detailReady) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ success: false, message: "结果详情暂时不可用" }) });
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    asset_id: "detail-retry-image",
+                    user_id: 1001,
+                    type: "IMAGE",
+                    title: "详情重试图片",
+                    status: "READY",
+                    preview_path: imageFixture("重试", "#dbeafe", "#0f766e"),
+                    mime_type: "image/svg+xml",
+                    width: 1024,
+                    height: 1024,
+                    size_bytes: 16384,
+                    created_at: 1785700000,
+                    updated_at: 1785700001,
+                },
+            }),
+        });
+    });
+
+    await page.goto("/creative/image");
+    await page.locator("textarea").nth(0).fill("详情失败后可恢复");
+    await page.getByRole("button", { name: "开始生成", exact: true }).click();
+    await expect(page.getByText("任务已完成，结果详情加载失败", { exact: true })).toBeVisible();
+    expect(jobPosts).toBe(1);
+
+    detailReady = true;
+    await page.getByRole("button", { name: "重试加载结果", exact: true }).click();
+    await expect(page.locator(".ant-image")).toHaveCount(1);
+    expect(jobPosts).toBe(1);
+    expect(assetDetailRequests).toBeGreaterThan(1);
+});
+
+test("image history keeps summary loading single-request and loads full assets on demand", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    let assetDetailRequests = 0;
+    const historyJob = { ...creativeJobFixture(42, "SUCCEEDED"), prompt: "历史提示词", negative_prompt: "历史负向词", result_asset_ids: ["history-result"] };
+    await page.route("**/api/creative/jobs**", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    items: [historyJob],
+                    assets: [
+                        {
+                            asset_id: "history-result",
+                            type: "IMAGE",
+                            title: "历史结果",
+                            status: "READY",
+                            review_status: "APPROVED",
+                            preview_path: imageFixture("历史", "#dbeafe", "#0f766e"),
+                            thumbnail_path: imageFixture("历史", "#dbeafe", "#0f766e"),
+                            mime_type: "image/svg+xml",
+                            width: 1024,
+                            height: 1024,
+                        },
+                    ],
+                    total: 1,
+                    page: 1,
+                    page_size: 20,
+                },
+            }),
+        }),
+    );
+    await page.route("**/api/creative/assets/history-result", (route) => {
+        assetDetailRequests += 1;
+        return route.fallback();
+    });
+
+    await page.goto("/creative/image");
+    const prompt = page.locator("textarea").nth(0);
+    await prompt.fill("当前未提交草稿");
+    await page.locator("textarea").nth(1).fill("当前负向词");
+    expect(assetDetailRequests).toBe(0);
+    await page.getByText("历史提示词", { exact: true }).click();
+
+    await expect(prompt).toHaveValue("当前未提交草稿");
+    await expect.poll(() => assetDetailRequests).toBe(1);
+    await page.getByText("历史提示词", { exact: true }).click();
+    await expect.poll(() => assetDetailRequests).toBe(1);
+    await page.getByRole("button", { name: "用于再次创作" }).click();
+    await page.getByRole("dialog", { name: "用于再次创作" }).getByRole("button", { name: "替换并继续" }).click();
+    await expect(prompt).toHaveValue("历史提示词");
+    await page.getByRole("button", { name: "撤销替换" }).click();
+    await expect(prompt).toHaveValue("当前未提交草稿");
+    await expect(page.locator("textarea").nth(1)).toHaveValue("当前负向词");
+});
+
+test("video history reuses the shared full-asset cache after opening details", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    let assetDetailRequests = 0;
+    const historyJob = { ...creativeVideoJobFixture("history", "SUCCEEDED", "视频历史详情"), result_asset_ids: ["history-video"] };
+    await page.route("**/api/creative/jobs**", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    items: [historyJob],
+                    assets: [
+                        {
+                            asset_id: "history-video",
+                            type: "VIDEO",
+                            title: "历史视频",
+                            status: "READY",
+                            review_status: "APPROVED",
+                            preview_path: "/api/creative/assets/history-video/content",
+                            thumbnail_path: imageFixture("历史视频", "#ede9fe", "#7c3aed"),
+                            mime_type: "video/mp4",
+                            width: 1280,
+                            height: 720,
+                            duration: 6,
+                        },
+                    ],
+                    total: 1,
+                    page: 1,
+                    page_size: 20,
+                },
+            }),
+        }),
+    );
+    await page.route("**/api/creative/assets/history-video", (route) => {
+        assetDetailRequests += 1;
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                success: true,
+                data: {
+                    id: 2,
+                    asset_id: "history-video",
+                    user_id: 1001,
+                    type: "VIDEO",
+                    title: "历史视频",
+                    status: "READY",
+                    preview_path: "/api/creative/assets/history-video/content",
+                    thumbnail_path: imageFixture("历史视频", "#ede9fe", "#7c3aed"),
+                    mime_type: "video/mp4",
+                    width: 1280,
+                    height: 720,
+                    duration: 6,
+                    size_bytes: 5242880,
+                    favorite: false,
+                    created_at: 1785700000,
+                    updated_at: 1785700001,
+                },
+            }),
+        });
+    });
+
+    await page.goto("/creative/video");
+    expect(assetDetailRequests).toBe(0);
+    await page.getByText("视频历史详情", { exact: true }).click();
+    await expect.poll(() => assetDetailRequests).toBe(1);
+    await page.getByText("视频历史详情", { exact: true }).click();
+    await expect.poll(() => assetDetailRequests).toBe(1);
 });
 
 test("video history restores a pending job and preserves terminal states", async ({ page }) => {
@@ -211,9 +645,15 @@ test("video history restores a pending job and preserves terminal states", async
         creativeVideoJobFixture("failed", "FAILED", "上游服务失败"),
     ];
     let recovered = false;
+    let jobListRequests = 0;
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => {
+        releaseRecovery = resolve;
+    });
     await page.route("**/api/creative/jobs**", async (route) => {
         const url = new URL(route.request().url());
         if (url.pathname.endsWith("/jobs/job-recover")) {
+            await recoveryGate;
             recovered = true;
             return route.fulfill({
                 status: 200,
@@ -224,6 +664,7 @@ test("video history restores a pending job and preserves terminal states", async
                 }),
             });
         }
+        jobListRequests += 1;
         const listedJobs = recovered
             ? [{ ...creativeVideoJobFixture("recover", "SUCCEEDED", "关闭页面后恢复"), result_asset_ids: ["recovered-video"], actual_quota: 12000, actual_cost: 0.12, billing_status: "SETTLED", usage_request_id: "request-recover" }, ...jobs.slice(1)]
             : jobs;
@@ -259,9 +700,39 @@ test("video history restores a pending job and preserves terminal states", async
     await expect(page.getByText("已取消", { exact: true })).toBeVisible();
     await expect(page.getByText("已超时", { exact: true })).toBeVisible();
     await expect(page.getByText("失败", { exact: true })).toBeVisible();
+    const jobListRequestsBeforeRecovery = jobListRequests;
+    expect(jobListRequestsBeforeRecovery).toBe(1);
+    releaseRecovery();
     await expect(page.getByRole("button", { name: "送入影视制作" })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText("实际消费 $0.1200 · 12000 配额", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "查看使用记录" })).toHaveAttribute("href", "/usage-logs/common?requestId=request-recover");
+    expect(jobListRequests).toBe(jobListRequestsBeforeRecovery);
+});
+
+test("video history keeps cancellation bound to the newest restored task", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    const cancelledJobIds: string[] = [];
+    await page.route("**/api/creative/jobs**", async (route) => {
+        const url = new URL(route.request().url());
+        if (route.request().method() === "POST" && url.pathname.endsWith("/cancel")) {
+            const jobId = url.pathname.split("/").at(-2) || "";
+            cancelledJobIds.push(jobId);
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: creativeVideoJobFixture(jobId.replace(/^job-/, ""), "CANCELLED", "用户取消恢复任务") }) });
+        }
+        if (/\/jobs\/job-(newest|older)$/.test(url.pathname)) {
+            const id = url.pathname.endsWith("newest") ? "newest" : "older";
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: creativeVideoJobFixture(id, "QUEUED", `${id} 恢复任务`) }) });
+        }
+        const jobs = [creativeVideoJobFixture("newest", "QUEUED", "最新恢复任务"), creativeVideoJobFixture("older", "QUEUED", "较早恢复任务")];
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: jobs, total: jobs.length, page: 1, page_size: 100 } }) });
+    });
+
+    await page.goto("/creative/video");
+    const cancelButton = page.getByRole("button", { name: "取消当前任务" });
+    await expect(cancelButton).toBeVisible();
+    await cancelButton.click();
+    await expect.poll(() => cancelledJobIds).toEqual(["job-newest"]);
+    await expect(cancelButton).toBeHidden();
 });
 
 test("asset center filters and restores trash on mobile", async ({ page }) => {
@@ -317,6 +788,27 @@ test("asset center filters and restores trash on mobile", async ({ page }) => {
     await drawer.getByRole("button", { name: "关闭" }).click();
     await page.getByRole("button", { name: "恢复", exact: true }).click();
     await expect.poll(() => restored).toBe(true);
+});
+
+test("asset center keeps list failures inline and retries without showing a false empty state", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    let assetListRequests = 0;
+    let allowAssetListSuccess = false;
+    await page.route("**/api/creative/assets**", async (route) => {
+        const url = new URL(route.request().url());
+        if (route.request().method() !== "GET" || !url.pathname.endsWith("/assets")) return route.fallback();
+        assetListRequests += 1;
+        if (!allowAssetListSuccess) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ success: false, message: "素材服务暂时不可用" }) });
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: creativeFixture("/assets") }) });
+    });
+
+    await page.goto("/creative/assets");
+    await expect(page.getByText("素材服务暂时不可用", { exact: true })).toBeVisible();
+    await expect(page.getByText("没有找到素材", { exact: true })).toHaveCount(0);
+    allowAssetListSuccess = true;
+    await page.getByRole("button", { name: /重试加载/ }).click();
+    await expect(page.getByText("晨雾中的山谷", { exact: true })).toBeVisible();
+    await expect.poll(() => assetListRequests).toBeGreaterThan(1);
 });
 
 test("asset center hands text to Character Studio and video to FilmGen", async ({ page }) => {
@@ -460,6 +952,80 @@ test("prompt library preserves source attribution and imports owned JSON", async
     expect(imported[0]).toMatchObject({ title: "我的导入提示词", source_type: "import", variables: [{ name: "subject", label: "subject" }] });
 });
 
+test("system prompt validates variables, opens image workbench, and restores the library view", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    const intents: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const promptItems = Array.from({ length: 18 }, (_, index) => ({
+        prompt_id: `catalog-${index}`,
+        user_id: 0,
+        title: `系统图像模板 ${index + 1}`,
+        content: "为 {{subject}} 设计电影感广告图",
+        negative_prompt: "{{subject}} 模糊、文字水印",
+        prompt_type: "image",
+        category: "image",
+        tags: ["catalog"],
+        variables: [{ name: "subject", label: "主体", required: true }],
+        favorite: false,
+        version: 1,
+        catalog: true,
+        source_type: "external",
+        author_name: "freestylefly",
+        source_url: "https://github.com/freestylefly/awesome-gpt-image-2",
+        source_license: "MIT",
+        allowed_uses: "允许修改与商用",
+        created_at: 1785700000,
+        updated_at: 1785700000,
+    }));
+
+    await page.route("**/api/creative/prompts**", async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname.endsWith("/revisions")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: [] }) });
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: promptItems, total: promptItems.length, page: 1, page_size: 24 } }) });
+    });
+    await page.route("**/api/creative/intents", async (route) => {
+        const body = route.request().postDataJSON() as { kind: string; payload: Record<string, unknown> };
+        intents.push(body);
+        return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ success: true, data: { id: "prompt-to-image", kind: body.kind, expires_at: 1785700300 } }) });
+    });
+
+    await page.goto("/creative/prompts");
+    await page.getByPlaceholder("搜索标题或正文").fill("电影感");
+    await page.getByRole("combobox", { name: "提示词来源" }).click();
+    await page
+        .locator(".ant-select-dropdown:visible")
+        .getByText("外部来源", { exact: true })
+        .evaluate((element) => (element as HTMLElement).click());
+    await page.locator("main").evaluate((element) => {
+        element.scrollTop = 480;
+        element.dispatchEvent(new Event("scroll"));
+    });
+
+    await page.getByRole("heading", { name: "系统图像模板 12", exact: true }).click();
+    const details = page.getByRole("dialog", { name: "系统图像模板 12" });
+    await details.getByRole("button", { name: "用于生图" }).click();
+    await expect(details.getByText("主体 *")).toBeVisible();
+    expect(intents).toHaveLength(0);
+
+    await details.getByRole("textbox").first().fill("户外咖啡机");
+    await details.getByRole("button", { name: "用于生图" }).click();
+    await expect(page).toHaveURL(/\/creative\/image\?intent=prompt-to-image$/);
+    expect(intents).toMatchObject([
+        {
+            kind: "image",
+            payload: {
+                prompt: "为 户外咖啡机 设计电影感广告图",
+                negative_prompt: "户外咖啡机 模糊、文字水印",
+            },
+        },
+    ]);
+
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "提示词库", exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder("搜索标题或正文")).toHaveValue("电影感");
+    await expect(page.getByRole("combobox", { name: "提示词来源" }).locator("xpath=ancestor::div[contains(@class, 'ant-select')][1]")).toContainText("外部来源");
+    await expect.poll(() => page.locator("main").evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+});
+
 test("canvas creates an explicit server version snapshot", async ({ page }) => {
     test.setTimeout(90_000);
     await prepareCreativePage(page, viewports[3]);
@@ -511,6 +1077,12 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
     await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
     await expect(page).toHaveURL(/\/creative\/canvas\/canvas-1$/, { timeout: 10_000 });
     await page.getByRole("button", { name: "打开画布菜单" }).click();
+    const canvasMenu = page.locator(".ant-dropdown-menu:visible");
+    await expect(canvasMenu.getByText("生图工作台", { exact: true })).toBeVisible();
+    await expect(canvasMenu.getByText("视频创作台", { exact: true })).toBeVisible();
+    await expect(canvasMenu.getByText("无限画布", { exact: true })).toBeVisible();
+    await expect(canvasMenu.getByText("素材中心", { exact: true })).toBeVisible();
+    await expect(canvasMenu.getByText("提示词库", { exact: true })).toBeVisible();
     await clickVisibleCanvasMenuItem(page, "创建版本快照");
     await expect.poll(() => snapshots.some((snapshot) => snapshot.expected_version === 1 && snapshot.schema_version === 2)).toBe(true);
     await page.getByRole("button", { name: "打开画布菜单" }).click();
@@ -523,6 +1095,52 @@ test("canvas creates an explicit server version snapshot", async ({ page }) => {
         .click();
     await expect.poll(() => restores.length).toBe(1);
     expect(restores[0]).toMatchObject({ expected_version: 2 });
+});
+
+test("canvas guards every cross-app exit when the current project cannot be saved", async ({ page }) => {
+    test.setTimeout(90_000);
+    await prepareCreativePage(page, viewports[0]);
+    let failedSaveRequests = 0;
+    const emptyDocument = { nodes: [], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } };
+    await page.route("**/api/creative/canvases**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (route.request().method() === "GET" && path.endsWith("/canvases")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [], total: 0, page: 1, page_size: 100 } }) });
+        if (route.request().method() === "POST")
+            return route.fulfill({
+                status: 201,
+                contentType: "application/json",
+                body: JSON.stringify({ success: true, data: { project_id: "guarded-canvas", user_id: 1001, title: "离开守卫画布", document: emptyDocument, version: 1, schema_version: 2, created_at: 1785700000, updated_at: 1785700000 } }),
+            });
+        if (route.request().method() === "PUT") {
+            failedSaveRequests += 1;
+            return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ success: false, message: "模拟保存失败" }) });
+        }
+        return route.fallback();
+    });
+
+    await page.goto("/creative/canvas");
+    await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
+    await expect(page).toHaveURL(/\/creative\/canvas\/guarded-canvas$/);
+    await page.getByRole("button", { name: "文本" }).click();
+
+    await page.getByRole("link", { name: "返回 FYJIT" }).click();
+    const unsavedDialog = page.getByRole("dialog", { name: "画布尚未保存" });
+    await expect(unsavedDialog).toBeVisible();
+    await expect.poll(() => failedSaveRequests).toBeGreaterThan(0);
+    await unsavedDialog.getByRole("button", { name: /继续\s*编辑/ }).click();
+    await expect(page).toHaveURL(/\/creative\/canvas\/guarded-canvas$/);
+
+    await page.getByRole("button", { name: "用户菜单" }).click();
+    await page.getByRole("dialog", { name: "用户菜单" }).getByRole("link", { name: "个人资料" }).click();
+    await expect(unsavedDialog).toBeVisible();
+    await unsavedDialog.getByRole("button", { name: /继续\s*编辑/ }).click();
+    await expect(page).toHaveURL(/\/creative\/canvas\/guarded-canvas$/);
+
+    await page.getByRole("button", { name: "打开画布菜单" }).click();
+    await clickVisibleCanvasMenuItem(page, "视频创作台");
+    await expect(unsavedDialog).toBeVisible();
+    await unsavedDialog.getByRole("button", { name: /继续\s*编辑/ }).click();
+    await expect(page).toHaveURL(/\/creative\/canvas\/guarded-canvas$/);
 });
 
 test("mobile canvas supports lightweight editing and starts a configured task", async ({ page }) => {
@@ -559,6 +1177,17 @@ test("mobile canvas supports lightweight editing and starts a configured task", 
     await page.getByRole("button", { name: "新建画布", exact: true }).first().click();
     await expect(page).toHaveURL(/\/creative\/canvas\/mobile-canvas$/);
     await expect(page.getByRole("button", { name: "展开面板" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "返回 FYJIT" })).toHaveAttribute("href", "/");
+    await page.getByRole("button", { name: "用户菜单" }).click();
+    const canvasAccountPanel = page.getByRole("dialog", { name: "用户菜单" });
+    await expect(canvasAccountPanel.getByRole("link", { name: "个人资料" })).toHaveAttribute("href", /\/profile$/);
+    await expect(canvasAccountPanel.getByRole("link", { name: "钱包" })).toHaveAttribute("href", /\/wallet$/);
+    await expect(canvasAccountPanel.getByRole("combobox", { name: "语言" })).toBeVisible();
+    await canvasAccountPanel.getByRole("button", { name: /切换到浅色主题/ }).click();
+    await expect(page.locator("html")).toHaveClass(/light/);
+    await expect.poll(() => page.evaluate(() => document.cookie)).toContain("vite-ui-theme=light");
+    await page.keyboard.press("Escape");
+    await expect(canvasAccountPanel).toBeHidden();
     await expectNoPageOverflow(page);
 
     await page.getByRole("button", { name: "文本" }).click();

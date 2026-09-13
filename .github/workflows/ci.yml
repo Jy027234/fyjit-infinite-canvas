@@ -38,6 +38,10 @@ jobs:
         working-directory: web
         run: bun run boundary:check
 
+      - name: FYJIT theme contract stays aligned
+        working-directory: web
+        run: bun run theme:check
+
       - name: Third-party inventory is generated
         working-directory: web
         run: bun run licenses:check

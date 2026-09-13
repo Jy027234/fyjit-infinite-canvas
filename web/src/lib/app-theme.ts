@@ -1,69 +1,173 @@
 import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
 
-const neutral = {
+const fontSans = '"Public Sans Variable", "Public Sans", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Arial, Helvetica, sans-serif';
+const fontMono = '"SFMono-Regular", Consolas, "Liberation Mono", monospace';
+
+const palettes = {
     light: {
-        primary: "#7c3aed",
+        background: "#f9fafd",
+        container: "#ffffff",
+        elevated: "#ffffff",
+        text: "#191e2a",
+        textSecondary: "#737373",
+        textTertiary: "#8a8a8a",
+        textQuaternary: "#a3a3a3",
+        primary: "#8755e6",
         primaryHover: "#6d28d9",
         primaryText: "#ffffff",
+        success: "#009966",
+        warning: "#d08700",
+        error: "#e7000b",
+        info: "#0084d1",
+        border: "#d7dae5",
+        borderSecondary: "#e8e9ef",
+        fillSecondary: "#f5f5f5",
+        outline: "#8a58ea",
         menuBg: "#f5f5f5",
-        menuText: "#171717",
         selectActiveBg: "#f5f5f5",
         selectSelectedBg: "#f0f0f0",
-        selectText: "#171717",
+        tableHeaderBg: "#f6f7fa",
         tableSelectedBg: "rgba(17, 17, 17, 0.05)",
         tableSelectedHoverBg: "rgba(17, 17, 17, 0.08)",
+        shadow: "0 1px 3px rgb(15 23 42 / 0.08), 0 1px 2px rgb(15 23 42 / 0.04)",
+        shadowSecondary: "0 12px 32px rgb(15 23 42 / 0.1)",
     },
     dark: {
-        primary: "#a78bfa",
+        background: "#090a0f",
+        container: "#10121a",
+        elevated: "#171922",
+        text: "#f1f3fc",
+        textSecondary: "#b7b7b7",
+        textTertiary: "#949494",
+        textQuaternary: "#737373",
+        primary: "#a883ff",
         primaryHover: "#c4b5fd",
-        primaryText: "#171717",
+        primaryText: "#090a0f",
+        success: "#00bc7d",
+        warning: "#fe9a00",
+        error: "#ff6467",
+        info: "#018dcf",
+        border: "rgba(255, 255, 255, 0.11)",
+        borderSecondary: "rgba(255, 255, 255, 0.08)",
+        fillSecondary: "#2f2f2f",
+        outline: "#ab7cff",
         menuBg: "#262626",
-        menuText: "#fafafa",
         selectActiveBg: "#262626",
         selectSelectedBg: "#333333",
-        selectText: "#fafafa",
+        tableHeaderBg: "#171922",
         tableSelectedBg: "rgba(255, 255, 255, 0.08)",
         tableSelectedHoverBg: "rgba(255, 255, 255, 0.12)",
+        shadow: "0 1px 3px rgb(0 0 0 / 0.24), 0 1px 2px rgb(0 0 0 / 0.18)",
+        shadowSecondary: "0 14px 36px rgb(0 0 0 / 0.32)",
     },
-};
+} as const;
 
-export function getAntThemeConfig(dark: boolean): ThemeConfig {
-    const color = dark ? neutral.dark : neutral.light;
-
+function buildTheme(mode: keyof typeof palettes): ThemeConfig {
+    const color = palettes[mode];
+    const dark = mode === "dark";
     return {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
             colorPrimary: color.primary,
-            colorInfo: color.primary,
+            colorSuccess: color.success,
+            colorWarning: color.warning,
+            colorError: color.error,
+            colorInfo: color.info,
             colorLink: color.primary,
             colorLinkHover: color.primaryHover,
             colorLinkActive: color.primary,
+            colorTextBase: color.text,
+            colorText: color.text,
+            colorTextSecondary: color.textSecondary,
+            colorTextTertiary: color.textTertiary,
+            colorTextQuaternary: color.textQuaternary,
             colorTextLightSolid: color.primaryText,
+            colorBgBase: color.background,
+            colorBgLayout: color.background,
+            colorBgContainer: color.container,
+            colorBgElevated: color.elevated,
+            colorBorder: color.border,
+            colorBorderSecondary: color.borderSecondary,
+            colorFillSecondary: color.fillSecondary,
+            controlOutline: color.outline,
+            controlOutlineWidth: 2,
+            controlHeight: 32,
+            controlHeightSM: 28,
+            controlHeightLG: 36,
+            controlHeightXS: 24,
+            borderRadius: 10,
+            borderRadiusSM: 6,
+            borderRadiusLG: 14,
+            fontFamily: fontSans,
+            fontFamilyCode: fontMono,
+            fontSize: 14,
+            fontSizeSM: 12,
+            fontSizeLG: 16,
+            lineHeight: 1.5,
+            lineHeightSM: 1.5,
+            lineHeightLG: 1.5,
+            boxShadow: color.shadow,
+            boxShadowSecondary: color.shadowSecondary,
         },
         components: {
             Button: {
                 primaryShadow: "none",
+                defaultShadow: "none",
+                controlHeight: 32,
+                controlHeightSM: 28,
+                controlHeightLG: 36,
+            },
+            Input: {
+                hoverBorderColor: color.primary,
+                activeBorderColor: color.primary,
+                activeShadow: `0 0 0 2px ${dark ? "rgba(171, 124, 255, 0.24)" : "rgba(138, 88, 234, 0.18)"}`,
+                hoverBg: color.container,
+                activeBg: color.container,
             },
             Menu: {
+                itemHeight: 36,
+                itemBorderRadius: 10,
                 itemActiveBg: color.menuBg,
                 itemHoverBg: color.menuBg,
                 itemSelectedBg: color.menuBg,
-                itemSelectedColor: color.menuText,
-                darkItemHoverBg: neutral.dark.menuBg,
-                darkItemSelectedBg: neutral.dark.menuBg,
-                darkItemSelectedColor: neutral.dark.menuText,
+                itemSelectedColor: color.text,
+                darkItemHoverBg: palettes.dark.menuBg,
+                darkItemSelectedBg: palettes.dark.menuBg,
+                darkItemSelectedColor: palettes.dark.text,
             },
             Select: {
+                optionHeight: 36,
                 optionActiveBg: color.selectActiveBg,
                 optionSelectedBg: color.selectSelectedBg,
-                optionSelectedColor: color.selectText,
+                optionSelectedColor: color.text,
+                selectorBg: color.container,
+                activeBorderColor: color.primary,
+                activeOutlineColor: dark ? "rgba(171, 124, 255, 0.24)" : "rgba(138, 88, 234, 0.18)",
             },
             Table: {
+                headerBg: color.tableHeaderBg,
+                headerColor: color.text,
+                borderColor: color.borderSecondary,
                 rowSelectedBg: color.tableSelectedBg,
                 rowSelectedHoverBg: color.tableSelectedHoverBg,
             },
+            Modal: {
+                headerBg: color.elevated,
+                contentBg: color.elevated,
+                footerBg: color.elevated,
+                titleColor: color.text,
+            },
         },
     };
+}
+
+const fyjitAntThemes = {
+    light: buildTheme("light"),
+    dark: buildTheme("dark"),
+} satisfies Record<keyof typeof palettes, ThemeConfig>;
+
+export function getAntThemeConfig(dark: boolean): ThemeConfig {
+    return fyjitAntThemes[dark ? "dark" : "light"];
 }

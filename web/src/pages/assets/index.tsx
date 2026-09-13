@@ -1,24 +1,13 @@
 import { Copy, Download, Filter, Grid2X2, Heart, List, PencilLine, Plus, RotateCcw, Search, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, App, AutoComplete, Button, Card, DatePicker, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Switch, Tag, Typography } from "antd";
+import { Alert, App, AutoComplete, Button, Card, DatePicker, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Spin, Switch, Tag, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useCreativeAssetMutations, useCreativeAssetsQuery, useCreativeProjectsQuery } from "@/hooks/use-creative-asset-list";
 import { FyjitEmptyState, FyjitPageHeader } from "@/components/fyjit/creative-ui";
 import { formatBytes } from "@/lib/image-utils";
-import {
-    createCreativeProject,
-    createCreativeTextAsset,
-    createCreativeIntent,
-    deleteCreativeAsset,
-    fetchCreativeAssets,
-    fetchCreativeProjects,
-    restoreCreativeAsset,
-    updateCreativeAsset,
-    uploadCreativeAsset,
-    type CreativeAsset,
-    type CreativeProject,
-} from "@/services/api/creative";
+import { createCreativeIntent, type CreativeAsset } from "@/services/api/creative";
 
 type AssetFormValues = {
     title: string;
@@ -50,8 +39,6 @@ export default function AssetsPage() {
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const [form] = Form.useForm<AssetFormValues>();
     const [projectForm] = Form.useForm<ProjectFormValues>();
-    const [assets, setAssets] = useState<CreativeAsset[]>([]);
-    const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(24);
     const [keyword, setKeyword] = useState("");
@@ -67,86 +54,56 @@ export default function AssetsPage() {
     const [trashOnly, setTrashOnly] = useState(false);
     const [view, setView] = useState<"grid" | "list">("grid");
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const [loading, setLoading] = useState(false);
     const [creatingText, setCreatingText] = useState(false);
     const [editing, setEditing] = useState<CreativeAsset>();
     const [preview, setPreview] = useState<CreativeAsset>();
     const [deleting, setDeleting] = useState<CreativeAsset>();
-    const [projects, setProjects] = useState<CreativeProject[]>([]);
     const [projectModalOpen, setProjectModalOpen] = useState(false);
-    const [projectSaving, setProjectSaving] = useState(false);
+    const assetsQuery = useCreativeAssetsQuery({
+        page,
+        pageSize,
+        type,
+        sourceModule,
+        projectId,
+        folderId,
+        search: keyword,
+        favorite: favoriteOnly,
+        model,
+        tag,
+        createdFrom,
+        createdTo,
+        trash: trashOnly,
+    });
+    const projectsQuery = useCreativeProjectsQuery({ pageSize: 100 });
+    const { createTextAsset, updateAsset: updateAssetMutation, uploadAsset, deleteAsset, restoreAsset, createProject } = useCreativeAssetMutations();
+    const assets = assetsQuery.items;
+    const total = assetsQuery.total;
+    const loading = assetsQuery.isPending || assetsQuery.isFetching;
+    const projects = projectsQuery.items;
+    const projectSaving = createProject.isPending;
     const projectOptions = useMemo(() => projects.map((item) => ({ label: item.title, value: item.project_id })), [projects]);
 
-    const refreshProjects = async (signal?: AbortSignal) => {
-        try {
-            const response = await fetchCreativeProjects({ pageSize: 100, signal });
-            setProjects(response.items || []);
-        } catch (error) {
-            if (!signal?.aborted) message.error(error instanceof Error ? error.message : "项目列表读取失败");
-        }
-    };
-
-    const refresh = async (signal?: AbortSignal) => {
-        setLoading(true);
-        try {
-            const result = await fetchCreativeAssets({
-                page,
-                pageSize,
-                type: type || undefined,
-                sourceModule: sourceModule || undefined,
-                projectId: projectId.trim() || undefined,
-                folderId: folderId.trim() || undefined,
-                search: keyword.trim() || undefined,
-                favorite: favoriteOnly,
-                model: model.trim() || undefined,
-                tag: tag.trim() || undefined,
-                createdFrom,
-                createdTo,
-                trash: trashOnly,
-                signal,
-            });
-            setAssets(result.items || []);
-            setTotal(result.total || 0);
-        } catch (error) {
-            if (!signal?.aborted) message.error(error instanceof Error ? error.message : "素材列表读取失败");
-        } finally {
-            if (!signal?.aborted) setLoading(false);
-        }
-    };
-
     useEffect(() => {
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => void refresh(controller.signal), 250);
-        return () => {
-            window.clearTimeout(timer);
-            controller.abort();
-        };
-        // refresh is intentionally derived from the current paging/filter state.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [createdFrom, createdTo, favoriteOnly, folderId, keyword, model, page, pageSize, projectId, sourceModule, tag, trashOnly, type]);
-
-    useEffect(() => {
-        const controller = new AbortController();
-        void refreshProjects(controller.signal);
-        return () => controller.abort();
-        // 项目列表仅在进入素材中心时读取，创建项目后会主动刷新。
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        if (projectsQuery.error) message.error(projectsQuery.error instanceof Error ? projectsQuery.error.message : "项目列表读取失败");
+    }, [message, projectsQuery.error]);
 
     const submitText = async () => {
         const values = await form.validateFields();
         try {
             if (editing) {
-                await updateCreativeAsset(editing.asset_id, {
-                    title: values.title.trim(),
-                    notes: values.notes?.trim(),
-                    tags: values.tags || [],
-                    folder_id: values.folder_id?.trim() || "",
-                    project_id: values.project_id || "",
+                await updateAssetMutation.mutateAsync({
+                    assetId: editing.asset_id,
+                    updates: {
+                        title: values.title.trim(),
+                        notes: values.notes?.trim(),
+                        tags: values.tags || [],
+                        folder_id: values.folder_id?.trim() || "",
+                        project_id: values.project_id || "",
+                    },
                 });
                 message.success("素材已更新");
             } else {
-                await createCreativeTextAsset({
+                await createTextAsset.mutateAsync({
                     title: values.title.trim(),
                     content: values.content.trim(),
                     notes: values.notes?.trim(),
@@ -159,7 +116,6 @@ export default function AssetsPage() {
             setCreatingText(false);
             setEditing(undefined);
             form.resetFields();
-            await refresh();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材保存失败");
         }
@@ -168,13 +124,12 @@ export default function AssetsPage() {
     const uploadFiles = async (files?: FileList | null) => {
         for (const file of Array.from(files || [])) {
             try {
-                await uploadCreativeAsset(file, file.name, undefined, undefined, projectId || undefined);
+                await uploadAsset.mutateAsync({ file, title: file.name, projectId: projectId || undefined });
                 message.success(`${file.name} 已上传`);
             } catch (error) {
                 message.error(`${file.name}：${error instanceof Error ? error.message : "上传失败"}`);
             }
         }
-        await refresh();
     };
 
     const openEdit = (asset: CreativeAsset) => {
@@ -185,8 +140,7 @@ export default function AssetsPage() {
 
     const toggleFavorite = async (asset: CreativeAsset) => {
         try {
-            await updateCreativeAsset(asset.asset_id, { favorite: !asset.favorite });
-            setAssets((items) => items.map((item) => (item.asset_id === asset.asset_id ? { ...item, favorite: !item.favorite } : item)));
+            await updateAssetMutation.mutateAsync({ assetId: asset.asset_id, updates: { favorite: !asset.favorite } });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "收藏状态更新失败");
         }
@@ -195,10 +149,9 @@ export default function AssetsPage() {
     const confirmDelete = async () => {
         if (!deleting) return;
         try {
-            await deleteCreativeAsset(deleting.asset_id);
+            await deleteAsset.mutateAsync(deleting.asset_id);
             setDeleting(undefined);
             message.success("素材已移入回收站");
-            await refresh();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材删除失败");
         }
@@ -206,9 +159,8 @@ export default function AssetsPage() {
 
     const restore = async (asset: CreativeAsset) => {
         try {
-            await restoreCreativeAsset(asset.asset_id);
+            await restoreAsset.mutateAsync(asset.asset_id);
             message.success("素材已恢复");
-            await refresh();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材恢复失败");
         }
@@ -216,10 +168,8 @@ export default function AssetsPage() {
 
     const submitProject = async () => {
         const values = await projectForm.validateFields();
-        setProjectSaving(true);
         try {
-            const project = await createCreativeProject({ title: values.title.trim(), description: values.description?.trim() });
-            await refreshProjects();
+            const project = await createProject.mutateAsync({ title: values.title.trim(), description: values.description?.trim() });
             setProjectId(project.project_id);
             setPage(1);
             setProjectModalOpen(false);
@@ -227,8 +177,6 @@ export default function AssetsPage() {
             message.success("项目已创建，后续上传和新建素材会自动归入该项目");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "项目创建失败");
-        } finally {
-            setProjectSaving(false);
         }
     };
 
@@ -420,6 +368,27 @@ export default function AssetsPage() {
                         </Button>
                     </div>
 
+                    {assetsQuery.error ? (
+                        <Alert
+                            className="mx-auto mt-6 max-w-5xl"
+                            type="error"
+                            showIcon
+                            message={assetsQuery.error instanceof Error ? assetsQuery.error.message : "素材列表读取失败"}
+                            action={
+                                <Button size="small" loading={assetsQuery.isFetching} onClick={() => void assetsQuery.refetch()}>
+                                    重试加载
+                                </Button>
+                            }
+                        />
+                    ) : null}
+
+                    {!assets.length && loading ? (
+                        <div className="mt-8 grid min-h-40 place-items-center gap-3 text-sm text-muted-foreground" role="status">
+                            <Spin />
+                            <span>正在读取素材…</span>
+                        </div>
+                    ) : null}
+
                     <div className={view === "grid" ? "mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" : "mx-auto mt-8 grid max-w-5xl gap-3"}>
                         {assets.map((asset) => (
                             <AssetCard
@@ -438,7 +407,7 @@ export default function AssetsPage() {
                             />
                         ))}
                     </div>
-                    {!assets.length && !loading ? <FyjitEmptyState icon={Search} title="没有找到素材" description="调整搜索或筛选条件，也可以上传新素材。" className="mt-8" /> : null}
+                    {!assets.length && !loading && !assetsQuery.error ? <FyjitEmptyState icon={Search} title="没有找到素材" description="调整搜索或筛选条件，也可以上传新素材。" className="mt-8" /> : null}
                     <div className="mt-8 flex justify-center">
                         <Pagination
                             current={page}
@@ -485,13 +454,7 @@ export default function AssetsPage() {
                     </Form.Item>
                     {!editing ? (
                         <>
-                            <Alert
-                                className="mb-4"
-                                type="info"
-                                showIcon
-                                message="文本素材的用途"
-                                description="保存后可直接用于生图、视频和角色创作，系统会把文本作为提示词带入对应工作台；也可作为项目中的脚本、对白或创作说明长期复用。"
-                            />
+                            <Alert className="mb-4" type="info" showIcon message="文本素材的用途" description="保存后可直接用于生图、视频和角色创作，系统会把文本作为提示词带入对应工作台；也可作为项目中的脚本、对白或创作说明长期复用。" />
                             <Form.Item name="content" label="文本内容" rules={[{ required: true, message: "请输入文本内容" }]}>
                                 <Input.TextArea rows={8} maxLength={100000} />
                             </Form.Item>
@@ -512,16 +475,7 @@ export default function AssetsPage() {
                 </Form>
             </Modal>
 
-            <Modal
-                title="新建创作项目"
-                open={projectModalOpen}
-                onCancel={() => setProjectModalOpen(false)}
-                onOk={() => void submitProject()}
-                confirmLoading={projectSaving}
-                okText="创建并选中"
-                cancelText="取消"
-                destroyOnHidden
-            >
+            <Modal title="新建创作项目" open={projectModalOpen} onCancel={() => setProjectModalOpen(false)} onOk={() => void submitProject()} confirmLoading={projectSaving} okText="创建并选中" cancelText="取消" destroyOnHidden>
                 <Form form={projectForm} layout="vertical" requiredMark={false} className="pt-2">
                     <Alert className="mb-4" type="info" showIcon message="项目用于集中管理同一作品的人设、背景、脚本和生成结果。" />
                     <Form.Item name="title" label="项目名称" rules={[{ required: true, message: "请输入项目名称" }]}>
@@ -569,7 +523,8 @@ type AssetActions = {
 
 function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDelete, onRestore, onContinue, trash, list }: AssetActions) {
     const typeLabel = asset.type === "IMAGE" ? "图片" : asset.type === "VIDEO" ? "视频" : asset.type === "AUDIO" ? "音频" : asset.type === "CHARACTER" ? "角色" : asset.type === "KEYFRAME" ? "关键帧" : asset.type === "CANVAS" ? "画布" : "文本";
-    const canContinue = ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME"].includes(asset.type);
+    const canContinueImage = ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME"].includes(asset.type);
+    const canContinueVideo = ["TEXT", "IMAGE", "VIDEO", "AUDIO", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type);
     const canContinueCharacter = asset.type === "TEXT";
     const canContinueFilm = asset.type === "VIDEO";
     const preview =
@@ -615,12 +570,12 @@ function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDe
                             下载
                         </Button>
                     ) : null}
-                    {canContinue ? (
+                    {canContinueImage ? (
                         <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={() => onContinue("image")}>
                             用于生图
                         </Button>
                     ) : null}
-                    {canContinue ? (
+                    {canContinueVideo ? (
                         <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={() => onContinue("video")}>
                             用于视频
                         </Button>
@@ -706,7 +661,8 @@ function AssetCard({ asset, onOpen, onEdit, onFavorite, onCopy, onDownload, onDe
 }
 
 function AssetDrawer({ asset, onClose, onCopy, onDownload, onContinue, trash }: { asset?: CreativeAsset; onClose: () => void; onCopy: () => void; onDownload: () => void; onContinue: (target: ContinueTarget) => void; trash: boolean }) {
-    const canContinue = asset ? ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME"].includes(asset.type) : false;
+    const canContinueImage = asset ? ["TEXT", "IMAGE", "CHARACTER", "KEYFRAME"].includes(asset.type) : false;
+    const canContinueVideo = asset ? ["TEXT", "IMAGE", "VIDEO", "AUDIO", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type) : false;
     const canContinueCharacter = asset?.type === "TEXT";
     const canContinueFilm = asset?.type === "VIDEO";
     return (
@@ -756,12 +712,12 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload, onContinue, trash }: 
                                     下载素材
                                 </Button>
                             ) : null}
-                            {canContinue ? (
+                            {canContinueImage ? (
                                 <Button icon={<Sparkles className="size-4" />} onClick={() => onContinue("image")}>
                                     用于生图
                                 </Button>
                             ) : null}
-                            {canContinue ? (
+                            {canContinueVideo ? (
                                 <Button icon={<Sparkles className="size-4" />} onClick={() => onContinue("video")}>
                                     用于视频
                                 </Button>

@@ -166,9 +166,25 @@ export type CreateCreativeJobRequest = CreativeEstimateRequest & {
 
 export type CreativeJobPage = {
     items: CreativeJob[];
+    assets?: CreativeAssetSummary[];
     total: number;
     page: number;
     page_size: number;
+};
+
+export type CreativeAssetSummary = {
+    asset_id: string;
+    type: CreativeAssetTypeContract;
+    title?: string;
+    status: string;
+    review_status: string;
+    preview_path?: string;
+    thumbnail_path?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    width?: number;
+    height?: number;
+    duration?: number;
 };
 
 export type CreativeAsset = {
@@ -247,10 +263,13 @@ export type CreativePrompt = {
     cover_asset_id?: string;
     author_name?: string;
     source_type?: string;
+    source_id?: string;
+    external_id?: string;
     source_url?: string;
     source_license?: string;
     allowed_uses?: string;
     source_updated_at?: number;
+    catalog: boolean;
     favorite: boolean;
     version: number;
     parent_prompt_id?: string;
@@ -396,12 +415,13 @@ export function createCreativeJob(request: CreateCreativeJobRequest, signal?: Ab
     });
 }
 
-export function fetchCreativeJobs(options?: { page?: number; pageSize?: number; capability?: string; status?: CreativeJobStatus; signal?: AbortSignal }) {
+export function fetchCreativeJobs(options?: { page?: number; pageSize?: number; capability?: string; status?: CreativeJobStatus; includeAssets?: "summary"; signal?: AbortSignal }) {
     const search = new URLSearchParams();
     if (options?.page) search.set("page", String(options.page));
     if (options?.pageSize) search.set("page_size", String(options.pageSize));
     if (options?.capability) search.set("capability", options.capability);
     if (options?.status) search.set("status", options.status);
+    if (options?.includeAssets) search.set("include_assets", options.includeAssets);
     return creativeRequest<CreativeJobPage>(`/jobs${search.size ? `?${search}` : ""}`, { signal: options?.signal });
 }
 

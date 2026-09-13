@@ -2,14 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Select } from "antd";
 import { useMemo } from "react";
 
-import { fetchCreativeProjects } from "@/services/api/creative";
+import { creativeProjectListQueryOptions } from "@/services/creative-asset-list";
 
 export function ProjectPicker({ value, onChange, className }: { value?: string; onChange: (value: string) => void; className?: string }) {
-    const projectsQuery = useQuery({
-        queryKey: ["creative-projects"],
-        queryFn: ({ signal }) => fetchCreativeProjects({ pageSize: 100, signal }),
-        staleTime: 60_000,
-    });
+    const projectsQuery = useQuery(creativeProjectListQueryOptions({ pageSize: 100 }));
     const projects = projectsQuery.data?.items;
     const options = useMemo(() => (projects || []).map((project) => ({ label: project.title, value: project.project_id })), [projects]);
 

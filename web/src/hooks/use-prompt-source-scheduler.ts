@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { refreshDueSources } from "@/services/api/prompts";
+import { CREATIVE_PROMPT_LIST_QUERY_ROOT } from "@/services/creative-prompt-list";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 
 const CHECK_INTERVAL_MS = 60_000;
@@ -25,6 +26,7 @@ export function usePromptSourceScheduler() {
                 await Promise.all([
                     queryClient.invalidateQueries({ queryKey: ["prompts"] }),
                     queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
+                    queryClient.invalidateQueries({ queryKey: CREATIVE_PROMPT_LIST_QUERY_ROOT }),
                     queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] }),
                 ]);
             } catch {

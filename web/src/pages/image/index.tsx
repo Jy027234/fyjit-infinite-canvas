@@ -1,39 +1,35 @@
-import {
-    ArrowLeft,
-    ArrowRight,
-    BookOpen,
-    CheckSquare,
-    ChevronDown,
-    ChevronLeft,
-    ChevronRight,
-    ChevronUp,
-    ClipboardPaste,
-    Download,
-    FolderPlus,
-    GitCompare,
-    History,
-    ImagePlus,
-    PenLine,
-    Plus,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    VideoIcon,
-} from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Image, Input, Modal, Segmented, Tag, Tooltip, Typography } from "antd";
+import { ArrowLeft, ArrowRight, BookOpen, ClipboardPaste, Download, FolderPlus, GitCompare, ImagePlus, PenLine, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { App, Button, Drawer, Image, Input, Modal, Segmented, Tag, Tooltip, Typography } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 import { saveAs } from "file-saver";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { CreativeEstimateSummary } from "@/components/creative-estimate-summary";
+import { CreativeGenerationStatus, creativeJobPendingSnapshot, summarizeCreativePendingResults, type CreativeGenerationPhase } from "@/components/creative-generation-status";
+import { CreativeHistoryPanel } from "@/components/creative-history-panel";
 import { CreativeReadinessNotice } from "@/components/creative-readiness-notice";
+import { CreativeResultCardShell } from "@/components/creative-result-card-shell";
+import { creativeJobStatusLabel, CreativeStatusTag, type CreativeHistoryStatus } from "@/components/creative-status-tag";
+import {
+    CreativeDraftNotice,
+    CreativeFieldHeader,
+    CreativeParametersSection,
+    CreativeSubmitDock,
+    CreativeWorkbenchComposer,
+    CreativeWorkbenchContent,
+    CreativeWorkbenchHeader,
+    CreativeWorkbenchHistoryRail,
+    CreativeWorkbenchMain,
+    CreativeWorkbenchResult,
+    CreativeWorkbenchRoot,
+} from "@/components/creative-workbench-layout";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { ProjectPicker } from "@/components/project-picker";
 import { ReferencePromptMentions } from "@/components/reference-prompt-mentions";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
-import { FyjitEmptyState, FyjitSurface, FyjitTaskStatus } from "@/components/fyjit/creative-ui";
+import { FyjitEmptyState, FyjitTaskStatus } from "@/components/fyjit/creative-ui";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { randomId } from "@/lib/utils";
 import { buildImageReferencePromptText, imageReferenceLabel } from "@/lib/image-reference-prompt";
@@ -42,13 +38,19 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useWorkbenchLayoutStore } from "@/stores/use-workbench-layout-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, fetchCreativeJobs, uploadCreativeAsset, waitForCreativeJob, type CreativeJob } from "@/services/api/creative";
+import { createCreativeIntent, createCreativeJob, estimateCreativeJob, fetchCreativeAsset, uploadCreativeAsset, waitForCreativeJob, type CreativeAsset, type CreativeAssetSummary, type CreativeJob } from "@/services/api/creative";
+import { clearCreativeDraft, loadCreativeDraft, saveCreativeDraft, sanitizeCreativeDraftReference, type ImageWorkbenchDraft } from "@/services/creative-draft-storage";
+import { useCreativeAssetDetails } from "@/hooks/use-creative-asset-details";
+import { creativeAssetDetailQueryOptions, isCreativeAssetDetail, uniqueCreativeAssetIds } from "@/services/creative-asset-details";
+import { upsertCreativeAssetListCache } from "@/services/creative-asset-list";
+import { creativeAssetSummaryFromDetail } from "@/services/creative-job-history";
 import { uploadImage } from "@/services/image-storage";
 import { readReferenceBlob } from "@/services/reference-storage";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { useCreativeIntentStore } from "@/stores/use-creative-intent-store";
 import { useFyjitStore } from "@/stores/use-fyjit-store";
 import { useCreativeEstimate } from "@/hooks/use-creative-estimate";
+import { useCreativeJobHistory } from "@/hooks/use-creative-job-history";
 import { useReferenceMentionInsertion } from "@/hooks/use-reference-mention-insertion";
 import type { ReferenceImage } from "@/types/image";
 
@@ -66,10 +68,18 @@ type GeneratedImage = {
 
 type GenerationResult = {
     id: string;
-    status: "pending" | "success" | "failed";
+    status: "pending" | "success" | "failed" | "asset-detail-error";
+    phase?: CreativeGenerationPhase;
+    progress?: number;
     image?: GeneratedImage;
     error?: string;
+    jobId?: string;
+    assetIds?: string[];
+    durationMs?: number;
+    retrying?: boolean;
 };
+
+type ImageSubmitResult = { kind: "success"; image: GeneratedImage } | { kind: "asset-detail-error"; jobId: string; assetIds: string[]; durationMs: number; error: string };
 
 type GenerationLog = {
     id: string;
@@ -87,21 +97,38 @@ type GenerationLog = {
     imageCount: number;
     size: string;
     quality: string;
-    status: "排队中" | "运行中" | "成功" | "部分成功" | "审核拒绝" | "失败" | "已取消" | "已超时";
+    status: CreativeHistoryStatus;
     images: GeneratedImage[];
     thumbnails: string[];
     task: CreativeJob;
+    fullAssetIds?: string[];
     error?: string;
 };
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
 
+type ImageDraftUndoSnapshot = {
+    prompt: string;
+    negativePrompt: string;
+    projectId: string;
+    generationMode: "text" | "edit";
+    model: string;
+    quality: string;
+    size: string;
+    count: string;
+    background: string;
+    references: ReferenceImage[];
+    results: GenerationResult[];
+};
+
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
+const HISTORY_PAGE_SIZE = 20;
 
 export default function ImagePage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
+    const queryClient = useQueryClient();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
@@ -119,11 +146,22 @@ export default function ImagePage() {
     const activeIntent = useCreativeIntentStore((state) => state.activeIntent);
     const fyjitModels = useFyjitStore((state) => state.models);
     const fyjitTokens = useFyjitStore((state) => state.tokens);
+    const currentUserId = useFyjitStore((state) => state.bootstrap?.user.id);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [generationMode, setGenerationMode] = useState<"text" | "edit">("text");
     const [projectId, setProjectId] = useState("");
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
+    const jobHistory = useCreativeJobHistory({ capability: "image_generation", pageSize: HISTORY_PAGE_SIZE });
+    const updateCompletedJobCache = (job: CreativeJob, assets: CreativeAsset[] = []) => {
+        const summaryById = new Map(jobHistory.assets.map((summary) => [summary.asset_id, summary]));
+        jobHistory.updateHistoryCache({
+            job,
+            assets: assets.map((asset) => creativeAssetSummaryFromDetail(asset, summaryById.get(asset.asset_id))),
+            insertIfMissing: true,
+        });
+        for (const asset of assets) upsertCreativeAssetListCache(queryClient, asset);
+    };
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -131,9 +169,8 @@ export default function ImagePage() {
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
-    const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
-    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [undoDraft, setUndoDraft] = useState<ImageDraftUndoSnapshot | null>(null);
     const [comparison, setComparison] = useState<{ before: string; after: string }>();
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
@@ -143,6 +180,20 @@ export default function ImagePage() {
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
     const referenceSectionRef = useRef<HTMLDivElement>(null);
+    const draftHydratedRef = useRef(false);
+    const draftScopeRef = useRef("");
+    const skipNextDraftLoadRef = useRef(false);
+    const intentAppliedRef = useRef(false);
+    const draftWriteRevisionRef = useRef(0);
+    const previewResultsBeforeRef = useRef<GenerationResult[] | null>(null);
+    const resumePendingHistoryRef = useRef(true);
+    const historyConversionRevisionRef = useRef(0);
+    const previewAssetIds = useMemo(
+        () => (previewLog ? uniqueCreativeAssetIds([...(previewLog.task?.result_asset_ids || []), ...(previewLog.task?.reference_asset_ids || [])]).filter((assetId) => !previewLog.fullAssetIds?.includes(assetId)) : []),
+        [previewLog],
+    );
+    const previewAssetDetails = useCreativeAssetDetails(previewAssetIds, Boolean(previewLog));
+    const detailedPreviewLog = useMemo(() => (previewLog ? hydrateImageLogWithAssets(previewLog, previewAssetDetails.assets) : null), [previewAssetDetails.assets, previewLog]);
 
     const imageModels = fyjitModels.filter((item) => item.capabilities.includes("image_generation"));
     const preferredModel = effectiveConfig.imageModel || effectiveConfig.model;
@@ -157,7 +208,16 @@ export default function ImagePage() {
     const promptReferences = references.map((reference, index) => ({ id: reference.id, label: imageReferenceLabel(index), title: reference.name }));
     const estimateParameters = { count: generationCount, size: effectiveConfig.size, quality: effectiveConfig.quality, background: effectiveConfig.background };
     const { estimate, loading: estimateLoading, error: estimateError } = useCreativeEstimate(model && fyjitTokens.length ? { capability: "image_generation", model, group: "auto", token: { strategy: "auto" }, parameters: estimateParameters } : null);
-    const canGenerate = Boolean(prompt.trim() && hasImageModel && fyjitTokens.length && estimate?.available && !estimateLoading && !estimateError && ((generationMode === "text" && supportsTextGeneration) || (generationMode === "edit" && supportsImageEditing && references.length)));
+    const canGenerate = Boolean(
+        prompt.trim() &&
+        hasImageModel &&
+        fyjitTokens.length &&
+        estimate?.available &&
+        !estimateLoading &&
+        !estimateError &&
+        ((generationMode === "text" && supportsTextGeneration) || (generationMode === "edit" && supportsImageEditing && references.length)),
+    );
+    const pendingSummary = summarizeCreativePendingResults(results);
     const estimateTokenLabel = estimate?.token_id ? `${fyjitTokens.find((item) => item.id === estimate.token_id)?.name || "本站 Token"} (#${estimate.token_id})` : "自动选择可用的本站 Token";
 
     useEffect(() => {
@@ -179,8 +239,13 @@ export default function ImagePage() {
     useEffect(() => {
         if (activeIntent?.kind !== "image") return;
         const intent = useCreativeIntentStore.getState().consumeFor("image");
+        if (intent) {
+            intentAppliedRef.current = true;
+            skipNextDraftLoadRef.current = Boolean(intent.project_id && intent.project_id !== projectId);
+        }
         if (intent?.prompt) setPrompt(intent.prompt);
         if (intent?.negative_prompt) setNegativePrompt(intent.negative_prompt);
+        if (intent?.project_id) setProjectId(intent.project_id);
         if (intent?.asset_ids?.length) {
             setGenerationMode("edit");
             const ids = intent.asset_ids;
@@ -207,14 +272,112 @@ export default function ImagePage() {
     }, [activeIntent, message]);
 
     useEffect(() => {
+        const userId = String(currentUserId || "").trim();
+        if (!userId) return;
+        const scope = `${userId}:${projectId}`;
+        if (intentAppliedRef.current) {
+            intentAppliedRef.current = false;
+            draftScopeRef.current = scope;
+            draftHydratedRef.current = true;
+            return;
+        }
+        if (skipNextDraftLoadRef.current) {
+            skipNextDraftLoadRef.current = false;
+            draftScopeRef.current = scope;
+            draftHydratedRef.current = true;
+            return;
+        }
+        const previousScope = draftScopeRef.current;
+        draftHydratedRef.current = false;
+        if (previousScope && previousScope !== scope) {
+            setPrompt("");
+            setNegativePrompt("");
+            setReferences([]);
+            setGenerationMode("text");
+        }
+        let cancelled = false;
+        void loadCreativeDraft<ImageWorkbenchDraft>(userId, "image", projectId).then(async (draft) => {
+            if (cancelled) return;
+            if (draft) {
+                setPrompt(draft.prompt);
+                setNegativePrompt(draft.negativePrompt);
+                setGenerationMode(draft.generationMode);
+                if (draft.model) updateConfig("imageModel", draft.model);
+                updateConfig("quality", draft.config.quality);
+                updateConfig("size", draft.config.size);
+                updateConfig("count", draft.config.count);
+                updateConfig("background", draft.config.background);
+                const draftMaxImageReferences = draft.model ? (fyjitModels.find((item) => item.id === draft.model)?.capability_profiles.image_generation?.max_reference_images ?? maxImageReferences) : maxImageReferences;
+                const assets = await Promise.all(
+                    draft.references.map(async (reference): Promise<ReferenceImage | null> => {
+                        try {
+                            const asset = await fetchCreativeAsset(reference.assetId);
+                            if (!["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"].includes(asset.type)) return null;
+                            return {
+                                id: asset.asset_id,
+                                assetId: asset.asset_id,
+                                name: asset.title || reference.name,
+                                type: asset.mime_type || reference.type || "image/png",
+                                dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+                                thumbnailUrl: asset.thumbnail_path,
+                            } satisfies ReferenceImage;
+                        } catch {
+                            return null;
+                        }
+                    }),
+                );
+                if (cancelled) return;
+                const restoredReferences = assets.filter((asset): asset is ReferenceImage => Boolean(asset));
+                setReferences(restoredReferences.slice(0, draftMaxImageReferences));
+                if (restoredReferences.length !== draft.references.length) message.info("草稿中的部分参考素材已失效，请重新选择");
+            }
+            if (!cancelled) {
+                draftScopeRef.current = scope;
+                draftHydratedRef.current = true;
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [currentUserId, projectId, fyjitModels, maxImageReferences]);
+
+    useEffect(() => {
+        const userId = String(currentUserId || "").trim();
+        const scope = `${userId}:${projectId}`;
+        if (!userId || !draftHydratedRef.current || draftScopeRef.current !== scope) return;
+        const revision = draftWriteRevisionRef.current;
+        const timer = window.setTimeout(() => {
+            if (revision !== draftWriteRevisionRef.current) return;
+            const referencesToPersist = references
+                .map((reference) => sanitizeCreativeDraftReference({ assetId: reference.assetId, name: reference.name, type: reference.type, kind: "image" }))
+                .filter((reference): reference is NonNullable<typeof reference> => Boolean(reference));
+            const draft: ImageWorkbenchDraft = {
+                version: 1,
+                kind: "image",
+                projectId,
+                prompt,
+                negativePrompt,
+                generationMode,
+                model,
+                config: {
+                    quality: effectiveConfig.quality,
+                    size: effectiveConfig.size,
+                    count: effectiveConfig.count,
+                    background: effectiveConfig.background,
+                },
+                references: referencesToPersist,
+                updatedAt: Date.now(),
+            };
+            void saveCreativeDraft(userId, "image", projectId, draft);
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [currentUserId, projectId, prompt, negativePrompt, generationMode, model, effectiveConfig.quality, effectiveConfig.size, effectiveConfig.count, effectiveConfig.background, references]);
+
+    useEffect(() => {
         if (!running || !startedAt) return;
         const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 1000);
         return () => window.clearInterval(timer);
     }, [running, startedAt]);
-
-    useEffect(() => {
-        void refreshLogs();
-    }, []);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || [])
@@ -299,8 +462,10 @@ export default function ImagePage() {
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
+        setUndoDraft(null);
+        previewResultsBeforeRef.current = null;
         const resultIds = Array.from({ length: generationCount }, () => nanoid());
-        setResults(resultIds.map((id) => ({ id, status: "pending" })));
+        setResults(resultIds.map((id) => ({ id, status: "pending", phase: "preparing" })));
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
@@ -311,23 +476,40 @@ export default function ImagePage() {
             const outcomes = await Promise.all(
                 resultIds.map(async (resultId, index) => {
                     try {
-                        const image = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters);
-                        if (!image) throw new Error("任务没有返回图片素材");
-                        setResults((value) => updateResultById(value, resultId, { status: "success", image }));
-                        return { ok: true as const, index };
+                        const submitted = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters, (job) =>
+                            setResults((value) => updateResultById(value, resultId, { ...creativeJobPendingSnapshot(job.status, job.progress), error: undefined })),
+                        );
+                        if (submitted.kind === "asset-detail-error") {
+                            setResults((value) =>
+                                updateResultById(value, resultId, {
+                                    status: "asset-detail-error",
+                                    error: submitted.error,
+                                    jobId: submitted.jobId,
+                                    assetIds: submitted.assetIds,
+                                    durationMs: submitted.durationMs,
+                                    phase: undefined,
+                                    progress: undefined,
+                                }),
+                            );
+                            return { kind: "asset-detail-error" as const, index };
+                        }
+                        setResults((value) => updateResultById(value, resultId, { status: "success", image: submitted.image }));
+                        return { kind: "success" as const, index };
                     } catch (requestError) {
                         const error = requestError instanceof Error ? requestError.message : "生成失败";
                         setResults((value) => updateResultById(value, resultId, { status: "failed", error }));
-                        return { ok: false as const, error, index };
+                        return { kind: "failed" as const, error, index };
                     }
                 }),
             );
-            successCount = outcomes.filter((outcome) => outcome.ok).length;
-            failCount = outcomes.length - successCount;
-            const firstError = outcomes.find((outcome) => !outcome.ok);
+            const detailErrorCount = outcomes.filter((outcome) => outcome.kind === "asset-detail-error").length;
+            successCount = outcomes.filter((outcome) => outcome.kind !== "failed").length;
+            failCount = outcomes.filter((outcome) => outcome.kind === "failed").length;
+            const firstError = outcomes.find((outcome) => outcome.kind === "failed");
             if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : firstError?.error });
-            await refreshLogs();
-            if (successCount && failCount) message.warning(`已生成 ${successCount} 张，${failCount} 张失败，可逐张重试`);
+            if (detailErrorCount && failCount) message.warning(`已完成 ${successCount} 张，其中 ${detailErrorCount} 张结果详情加载失败，${failCount} 张生成失败`);
+            else if (detailErrorCount) message.warning(`任务已完成，但 ${detailErrorCount} 张结果详情加载失败，可重试加载`);
+            else if (successCount && failCount) message.warning(`已生成 ${successCount} 张，${failCount} 张失败，可逐张重试`);
             else if (successCount) message.success("图片已生成并保存到 FYJIT 素材中心");
             else message.error(firstError?.error || "生成失败");
         } catch (requestError) {
@@ -378,10 +560,6 @@ export default function ImagePage() {
         message.success("已加入参考图");
     };
 
-    const saveResultToAssets = async (_image: GeneratedImage, _index: number) => {
-        message.success("生成结果已由 FYJIT 自动保存到素材中心");
-    };
-
     const sendResultToVideo = async (image: GeneratedImage) => {
         try {
             const intent = await createCreativeIntent("video", { prompt: prompt.trim(), negative_prompt: negativePrompt.trim() || undefined, asset_ids: [image.id] });
@@ -417,39 +595,72 @@ export default function ImagePage() {
         setResults([]);
         setElapsedMs(0);
         setStartedAt(0);
-        setSelectedLogIds([]);
         setPreviewLog(null);
+        setUndoDraft(null);
+        previewResultsBeforeRef.current = null;
     };
 
-    const deleteSelectedLogs = () => {
-        if (previewLog && selectedLogIds.includes(previewLog.id)) {
-            setPreviewLog(null);
-            setResults([]);
-        }
-        setSelectedLogIds([]);
-        setDeleteConfirmOpen(false);
-        message.info("服务端生成记录用于消费审计，不能删除；可在素材中心删除结果素材");
-    };
-
-    const refreshLogs = async (resumePending = true) => {
-        const response = await fetchCreativeJobs({ capability: "image_generation", pageSize: 100 });
-        const nextLogs = await Promise.all((response.items || []).map(creativeJobToImageLog));
-        setLogs(nextLogs);
-        if (resumePending) {
-            for (const log of nextLogs) {
-                if (log.status === "排队中" || log.status === "运行中") void pollImageLog(log);
+    useEffect(() => {
+        let cancelled = false;
+        const revision = ++historyConversionRevisionRef.current;
+        const shouldResume = resumePendingHistoryRef.current;
+        resumePendingHistoryRef.current = true;
+        const fetchAsset = createSummaryAssetFetcher(jobHistory.assets);
+        void Promise.all(jobHistory.items.map((job) => creativeJobToImageLog(job, fetchAsset))).then((nextLogs) => {
+            if (cancelled || historyConversionRevisionRef.current !== revision) return;
+            setLogs(nextLogs);
+            if (shouldResume) {
+                for (const log of nextLogs) {
+                    if (log.status === "排队中" || log.status === "运行中") void pollImageLog(log);
+                }
             }
-        }
-        return nextLogs;
-    };
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [jobHistory.assets, jobHistory.items]);
 
     const pollImageLog = async (log: GenerationLog) => {
         if (activeLogIdsRef.current.has(log.id)) return;
         activeLogIdsRef.current.add(log.id);
         try {
-            const completed = await waitForCreativeJob(log.id, { intervalMs: 1500 });
-            const next = await creativeJobToImageLog(completed);
-            setLogs((current) => current.map((item) => (item.id === next.id ? next : item)));
+            const completed = await waitForCreativeJob(log.id, { intervalMs: 1500, onUpdate: (next) => updateCompletedJobCache(next) });
+            updateCompletedJobCache(completed);
+            const terminal = await creativeJobToImageLog(completed, createSummaryAssetFetcher(jobHistory.assets));
+            setLogs((current) =>
+                current.some((item) => item.id === terminal.id)
+                    ? current.map((item) =>
+                          item.id === terminal.id
+                              ? {
+                                    ...terminal,
+                                    references: terminal.references.length ? terminal.references : item.references,
+                                    images: terminal.images.length ? terminal.images : item.images,
+                                    thumbnails: terminal.thumbnails.length ? terminal.thumbnails : item.thumbnails,
+                                }
+                              : item,
+                      )
+                    : [terminal, ...current],
+            );
+            setPreviewLog((current) =>
+                current?.id === terminal.id
+                    ? {
+                          ...terminal,
+                          references: terminal.references.length ? terminal.references : current.references,
+                          images: terminal.images.length ? terminal.images : current.images,
+                          thumbnails: terminal.thumbnails.length ? terminal.thumbnails : current.thumbnails,
+                      }
+                    : current,
+            );
+            const resultAssets = await Promise.all(uniqueCreativeAssetIds(completed.result_asset_ids || []).map((assetId) => queryClient.fetchQuery(creativeAssetDetailQueryOptions(assetId)).catch(() => null)));
+            const assetsById = new Map(resultAssets.filter((asset): asset is CreativeAsset => Boolean(asset)).map((asset) => [asset.asset_id, asset]));
+            const next = await creativeJobToImageLog(completed, async (assetId) => {
+                const detail = assetsById.get(assetId);
+                if (detail) return detail;
+                const summary = jobHistory.assets.find((asset) => asset.asset_id === assetId);
+                return summary || queryClient.fetchQuery(creativeAssetDetailQueryOptions(assetId)).catch(() => null);
+            });
+            updateCompletedJobCache(completed, Array.from(assetsById.values()));
+            setLogs((current) => (current.some((item) => item.id === next.id) ? current.map((item) => (item.id === next.id ? next : item)) : [next, ...current]));
             setPreviewLog((current) => (current?.id === next.id ? next : current));
             setResults((current) =>
                 current.some((item) => item.id === next.id) ? (next.images.length ? next.images.map((image) => ({ id: image.id, status: "success" as const, image })) : [{ id: next.id, status: "failed", error: next.error || next.status }]) : current,
@@ -462,22 +673,78 @@ export default function ImagePage() {
     };
 
     const previewGenerationLog = async (log: GenerationLog) => {
+        if (!previewResultsBeforeRef.current) {
+            previewResultsBeforeRef.current = results.map((result) => ({ ...result, image: result.image ? { ...result.image } : undefined }));
+        }
         setPreviewLog(log);
         setLogsOpen(false);
-        setPrompt(log.prompt);
-        setNegativePrompt(log.negativePrompt);
-        setReferences((log.references || []).slice(0, maxImageReferences));
-        if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
-        if (log.config.quality) updateConfig("quality", log.config.quality);
-        if (log.config.size) updateConfig("size", log.config.size);
-        if (log.config.count) updateConfig("count", log.config.count);
-        setResults(
-            log.status === "排队中" || log.status === "运行中"
-                ? [{ id: log.id, status: "pending" }]
-                : log.images.length
-                  ? log.images.map((image) => ({ id: image.id, status: "success", image }))
-                  : [{ id: log.id, status: "failed", error: log.error || log.status }],
-        );
+        setResults(imageResultsFromLog(log));
+    };
+
+    useEffect(() => {
+        if (!previewLog || !detailedPreviewLog || !previewAssetDetails.assets.size) return;
+        const nextResults = imageResultsFromLog(detailedPreviewLog);
+        setResults((current) => (imageResultSignature(current) === imageResultSignature(nextResults) ? current : nextResults));
+    }, [detailedPreviewLog, previewAssetDetails.assets.size, previewLog]);
+
+    const applyPreviewLog = () => {
+        if (!previewLog) return;
+        const log = detailedPreviewLog || previewLog;
+        modal.confirm({
+            title: "用于再次创作",
+            content: "这会替换当前未提交的提示词、参考素材和参数设置，是否继续？",
+            okText: "替换并继续",
+            cancelText: "取消",
+            onOk: () => {
+                setUndoDraft({
+                    prompt,
+                    negativePrompt,
+                    projectId,
+                    generationMode,
+                    model,
+                    quality: effectiveConfig.quality,
+                    size: effectiveConfig.size,
+                    count: effectiveConfig.count,
+                    background: effectiveConfig.background,
+                    references: references.map((reference) => ({ ...reference })),
+                    results: (previewResultsBeforeRef.current || results).map((result) => ({ ...result, image: result.image ? { ...result.image } : undefined })),
+                });
+                const nextProjectId = log.task?.project_id || "";
+                skipNextDraftLoadRef.current = nextProjectId !== projectId;
+                setProjectId(nextProjectId);
+                setPrompt(log.prompt);
+                setNegativePrompt(log.negativePrompt);
+                setReferences((log.references || []).slice(0, maxImageReferences));
+                setGenerationMode(log.references?.length ? "edit" : "text");
+                if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
+                if (log.config.quality) updateConfig("quality", log.config.quality);
+                if (log.config.size) updateConfig("size", log.config.size);
+                if (log.config.count) updateConfig("count", log.config.count);
+                previewResultsBeforeRef.current = null;
+                message.success("已将历史参数填入当前创作草稿");
+            },
+        });
+    };
+
+    const undoPreviewApply = () => {
+        if (!undoDraft) return;
+        const previous = undoDraft;
+        skipNextDraftLoadRef.current = previous.projectId !== projectId;
+        setProjectId(previous.projectId);
+        setPrompt(previous.prompt);
+        setNegativePrompt(previous.negativePrompt);
+        setGenerationMode(previous.generationMode);
+        setReferences(previous.references.map((reference) => ({ ...reference })));
+        setResults(previous.results.map((result) => ({ ...result, image: result.image ? { ...result.image } : undefined })));
+        updateConfig("imageModel", previous.model);
+        updateConfig("quality", previous.quality);
+        updateConfig("size", previous.size);
+        updateConfig("count", previous.count);
+        updateConfig("background", previous.background);
+        setPreviewLog(null);
+        setUndoDraft(null);
+        previewResultsBeforeRef.current = null;
+        message.success("已撤销历史参数替换");
     };
 
     const buildRequestSnapshot = () => {
@@ -521,7 +788,12 @@ export default function ImagePage() {
             }),
         );
 
-    const submitImageJob = async (snapshot: { text: string; negativePrompt: string; config: AiConfig; references: ReferenceImage[] }, referenceAssetIds: string[], normalizedParameters: Record<string, unknown>) => {
+    const submitImageJob = async (
+        snapshot: { text: string; negativePrompt: string; config: AiConfig; references: ReferenceImage[] },
+        referenceAssetIds: string[],
+        normalizedParameters: Record<string, unknown>,
+        onStatus: (job: CreativeJob) => void,
+    ): Promise<ImageSubmitResult> => {
         const requestStartedAt = performance.now();
         const job = await createCreativeJob({
             project_id: projectId || undefined,
@@ -535,31 +807,52 @@ export default function ImagePage() {
             reference_asset_ids: referenceAssetIds,
             idempotency_key: randomId(),
         });
-        const completed = await waitForCreativeJob(job.job_id, {
-            onUpdate: (next) => {
-                const pendingProgress = Math.max(1, Math.min(99, next.progress));
-                setElapsedMs(performance.now() - requestStartedAt);
-                setResults((current) => current.map((item) => (item.status === "pending" ? { ...item, error: `生成进度 ${pendingProgress}%` } : item)));
-            },
-        });
+        onStatus(job);
+        draftWriteRevisionRef.current += 1;
+        await clearCreativeDraft(currentUserId, "image", projectId);
+        activeLogIdsRef.current.add(job.job_id);
+        updateCompletedJobCache(job);
+        let completed: CreativeJob;
+        try {
+            completed = await waitForCreativeJob(job.job_id, {
+                onUpdate: (next) => {
+                    updateCompletedJobCache(next);
+                    setElapsedMs(performance.now() - requestStartedAt);
+                    onStatus(next);
+                },
+            });
+        } catch (error) {
+            activeLogIdsRef.current.delete(job.job_id);
+            throw error;
+        }
+        activeLogIdsRef.current.delete(job.job_id);
+        updateCompletedJobCache(completed);
         if (completed.status !== "SUCCEEDED" && completed.status !== "PARTIAL_SUCCESS") throw new Error(completed.error || "生图任务未完成");
         if (completed.status === "PARTIAL_SUCCESS") message.warning(completed.error || "部分候选生成失败，已保留成功结果");
-        const assets = await Promise.all((completed.result_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId)));
-        return assets.map((asset) => ({
-            id: asset.asset_id,
-            dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
-            durationMs: performance.now() - requestStartedAt,
-            width: asset.width || 0,
-            height: asset.height || 0,
-            bytes: asset.size_bytes || 0,
-            mimeType: asset.mime_type,
-        }))[0];
+        const assetIds = uniqueCreativeAssetIds(completed.result_asset_ids || []);
+        try {
+            const assets = await Promise.all(assetIds.map((assetId) => queryClient.fetchQuery(creativeAssetDetailQueryOptions(assetId))));
+            updateCompletedJobCache(completed, assets);
+            const asset = assets[0];
+            if (!asset) throw new Error("任务没有返回图片素材");
+            return { kind: "success", image: generatedImageFromAsset(asset, performance.now() - requestStartedAt) };
+        } catch (error) {
+            return {
+                kind: "asset-detail-error",
+                jobId: completed.job_id,
+                assetIds,
+                durationMs: performance.now() - requestStartedAt,
+                error: error instanceof Error ? error.message : "结果详情加载失败",
+            };
+        }
     };
 
     const retryResult = async (index: number) => {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
         setPreviewLog(null);
+        setUndoDraft(null);
+        previewResultsBeforeRef.current = null;
         try {
             const checkedEstimate = await estimateCreativeJob({
                 capability: "image_generation",
@@ -570,11 +863,26 @@ export default function ImagePage() {
             });
             if (!checkedEstimate.available) throw new Error(checkedEstimate.message || "当前模型尚未完成计费配置");
             const referenceAssetIds = await uploadImageReferences(snapshot.references);
-            setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
-            const image = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters);
-            if (!image) throw new Error("任务没有返回图片素材");
-            setResults((value) => updateResultAt(value, index, { status: "success", image }));
-            await refreshLogs();
+            setResults((value) => updateResultAt(value, index, { status: "pending", phase: "preparing", progress: undefined, error: undefined, image: undefined }));
+            const submitted = await submitImageJob(snapshot, referenceAssetIds, checkedEstimate.normalized_parameters, (job) =>
+                setResults((value) => updateResultAt(value, index, { ...creativeJobPendingSnapshot(job.status, job.progress), error: undefined })),
+            );
+            if (submitted.kind === "asset-detail-error") {
+                setResults((value) =>
+                    updateResultAt(value, index, {
+                        status: "asset-detail-error",
+                        error: submitted.error,
+                        jobId: submitted.jobId,
+                        assetIds: submitted.assetIds,
+                        durationMs: submitted.durationMs,
+                        phase: undefined,
+                        progress: undefined,
+                    }),
+                );
+                message.warning("任务已完成，结果详情加载失败，可重试加载");
+                return;
+            }
+            setResults((value) => updateResultAt(value, index, { status: "success", image: submitted.image }));
             message.success("重试成功");
         } catch (requestError) {
             const error = requestError instanceof Error ? requestError.message : "重试失败";
@@ -583,59 +891,48 @@ export default function ImagePage() {
         }
     };
 
-    return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className={`grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden ${historyCollapsed ? "lg:grid-cols-[48px_minmax(0,1fr)]" : "lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)]"}`}>
-                <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    {historyCollapsed ? (
-                        <button
-                            type="button"
-                            className="flex size-full min-h-32 flex-col items-center gap-2 rounded-md py-2 text-xs text-stone-500 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
-                            onClick={() => setHistoryCollapsed(false)}
-                            aria-label="展开生成记录"
-                            title="展开生成记录"
-                        >
-                            <ChevronRight className="size-4" />
-                            <History className="size-4" />
-                            <span className="[writing-mode:vertical-rl]">生成记录</span>
-                        </button>
-                    ) : (
-                        <>
-                            <div className="mb-2 flex justify-end">
-                                <Button size="small" type="text" icon={<ChevronLeft className="size-4" />} onClick={() => setHistoryCollapsed(true)} aria-label="折叠生成记录">
-                                    折叠
-                                </Button>
-                            </div>
-                            <LogPanel
-                                logs={logs}
-                                selectedLogIds={selectedLogIds}
-                                activeLogId={previewLog?.id}
-                                onSelectedLogIdsChange={setSelectedLogIds}
-                                onCreateSession={createSession}
-                                onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                                onPreviewLog={(log) => void previewGenerationLog(log)}
-                            />
-                        </>
-                    )}
-                </aside>
+    const retryResultDetails = async (index: number) => {
+        const result = results[index];
+        if (result?.status !== "asset-detail-error" || result.retrying || !result.assetIds?.length) return;
+        setResults((value) => updateResultAt(value, index, { retrying: true }));
+        try {
+            const assets = await Promise.all(result.assetIds.map((assetId) => queryClient.fetchQuery(creativeAssetDetailQueryOptions(assetId))));
+            const asset = assets[0];
+            if (!asset) throw new Error("任务没有返回图片素材");
+            for (const detail of assets) upsertCreativeAssetListCache(queryClient, detail);
+            const image = generatedImageFromAsset(asset, result.durationMs || 0);
+            setResults((value) => (value.some((item) => item.id === result.id) ? value.map((item) => (item.id === result.id ? { id: result.id, status: "success", image } : item)) : value));
+            message.success("结果详情已加载");
+        } catch (error) {
+            const detailError = error instanceof Error ? error.message : "结果详情加载失败";
+            setResults((value) => updateResultById(value, result.id, { retrying: false, error: detailError }));
+            message.error("结果详情仍未加载，可稍后重试");
+        }
+    };
 
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
-                        <div>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">生图工作台</h1>
-                                </div>
-                                <div className="flex shrink-0 gap-2 lg:hidden">
-                                    <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                        记录
-                                    </Button>
-                                    <Button icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                        参数
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
+    return (
+        <CreativeWorkbenchRoot>
+            <CreativeWorkbenchMain historyCollapsed={historyCollapsed}>
+                <CreativeWorkbenchHistoryRail collapsed={historyCollapsed} onCollapsedChange={setHistoryCollapsed}>
+                    <CreativeHistoryPanel
+                        items={logs}
+                        activeItemId={previewLog?.id}
+                        disabled={running}
+                        onCreateSession={createSession}
+                        onSelectItem={(log) => void previewGenerationLog(log)}
+                        total={jobHistory.total}
+                        initialLoading={jobHistory.isPending}
+                        loadingMore={jobHistory.isFetchingNextPage}
+                        error={jobHistory.error instanceof Error ? jobHistory.error.message : jobHistory.isError ? "生成记录加载失败" : ""}
+                        onRetry={() => void jobHistory.refetch()}
+                        onLoadMore={() => void jobHistory.fetchNextPage()}
+                        renderCard={(log, context) => <LogCard key={log.id} log={log} active={context.active} disabled={context.disabled} onClick={context.onSelect} />}
+                    />
+                </CreativeWorkbenchHistoryRail>
+
+                <CreativeWorkbenchContent>
+                    <CreativeWorkbenchComposer>
+                        <CreativeWorkbenchHeader title="生图工作台" onOpenHistory={() => setLogsOpen(true)} onOpenParameters={() => setSettingsOpen(true)} />
 
                         <div className="mt-6 space-y-5">
                             <CreativeReadinessNotice capabilityLabel="生图" hasModel={hasImageModel} hasToken={fyjitTokens.length > 0} />
@@ -652,20 +949,38 @@ export default function ImagePage() {
                                 />
                             </div>
                             <div>
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">提示词</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
-                                            查看提示词库
-                                        </Button>
-                                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
-                                            查看我的资产
-                                        </Button>
-                                    </div>
-                                </div>
-                                <Input.TextArea id="image-prompt" name="image_prompt" ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图" />
+                                <CreativeFieldHeader
+                                    label="提示词"
+                                    actions={
+                                        <div className="flex gap-2">
+                                            <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
+                                                查看提示词库
+                                            </Button>
+                                            <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
+                                                查看我的资产
+                                            </Button>
+                                        </div>
+                                    }
+                                />
+                                <Input.TextArea
+                                    id="image-prompt"
+                                    name="image_prompt"
+                                    ref={promptInputRef}
+                                    value={prompt}
+                                    onChange={(event) => setPrompt(event.target.value)}
+                                    rows={7}
+                                    placeholder="描述画面主体、风格、构图、光线和用途；可用 @图片1 关联参考图"
+                                />
                                 {generationMode === "edit" ? <ReferencePromptMentions references={promptReferences} onInsert={insertPromptReference} /> : null}
-                                <Input.TextArea id="image-negative-prompt" name="image_negative_prompt" className="mt-3" value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={3} placeholder="负向提示词（可选）：描述不希望出现的元素" />
+                                <Input.TextArea
+                                    id="image-negative-prompt"
+                                    name="image_negative_prompt"
+                                    className="mt-3"
+                                    value={negativePrompt}
+                                    onChange={(event) => setNegativePrompt(event.target.value)}
+                                    rows={3}
+                                    placeholder="负向提示词（可选）：描述不希望出现的元素"
+                                />
                             </div>
 
                             {maxImageReferences > 0 && generationMode === "edit" ? (
@@ -682,7 +997,7 @@ export default function ImagePage() {
                                         </div>
                                     </div>
                                     <div
-                                        className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${isReferenceDragActive ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                        className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${isReferenceDragActive ? "border-primary bg-accent" : "border-border"}`}
                                         onDragEnter={(event) => {
                                             event.preventDefault();
                                             dragDepthRef.current += 1;
@@ -710,7 +1025,7 @@ export default function ImagePage() {
                                         }}
                                     >
                                         {references.map((item, index) => (
-                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-border">
                                                 <img src={item.thumbnailUrl || item.dataUrl} alt={item.name} className="size-full object-cover" loading="lazy" />
                                                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
                                                 <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
@@ -725,75 +1040,84 @@ export default function ImagePage() {
                                             </div>
                                         ))}
                                         {!references.length ? (
-                                            <div className="flex min-w-full items-center justify-center text-sm text-stone-500 dark:text-stone-400">
-                                                {isReferenceDragActive ? "松开即可添加参考图" : `暂无参考图，可将图片拖到这里，最多 ${maxImageReferences} 张`}
-                                            </div>
+                                            <div className="flex min-w-full items-center justify-center text-sm text-muted-foreground">{isReferenceDragActive ? "松开即可添加参考图" : `暂无参考图，可将图片拖到这里，最多 ${maxImageReferences} 张`}</div>
                                         ) : null}
                                     </div>
                                 </div>
                             ) : null}
 
-                            <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
-                                <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {effectiveConfig.quality}
-                                </span>
-                                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    调整
-                                </Button>
-                            </div>
-
-                            <div className="hidden sm:block">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">模型与参数</span>
-                                    <Button
-                                        size="small"
-                                        type="text"
-                                        icon={parametersCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
-                                        onClick={() => setParametersCollapsed(!parametersCollapsed)}
-                                        aria-expanded={!parametersCollapsed}
-                                    >
-                                        {parametersCollapsed ? "展开" : "折叠"}
-                                    </Button>
+                            <CreativeParametersSection collapsed={parametersCollapsed} onCollapsedChange={setParametersCollapsed} summary={`${modelOptionLabel(effectiveConfig, model)} · ${effectiveConfig.size} · ${effectiveConfig.quality}`}>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <GenerationSettings
+                                        config={effectiveConfig}
+                                        model={model}
+                                        projectId={projectId}
+                                        onProjectChange={setProjectId}
+                                        updateConfig={updateConfig}
+                                        openConfigDialog={openConfigDialog}
+                                        baseSizesOnly={generationMode === "text" && model.toLowerCase().includes("wan2.6")}
+                                    />
                                 </div>
-                                {!parametersCollapsed ? (
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} baseSizesOnly={generationMode === "text" && model.toLowerCase().includes("wan2.6")} />
+                            </CreativeParametersSection>
+                        </div>
+
+                        <CreativeSubmitDock
+                            summary={
+                                <CreativeEstimateSummary
+                                    estimate={estimate}
+                                    loading={estimateLoading}
+                                    error={estimateError}
+                                    requestedParameters={estimateParameters}
+                                    referenceCounts={{ images: references.length }}
+                                    purposeLabel={generationMode === "edit" ? "参考图编辑" : "文生图"}
+                                    modelLabel={modelOptionLabel(effectiveConfig, model)}
+                                    tokenLabel={estimateTokenLabel}
+                                    profile={modelProfile}
+                                />
+                            }
+                            primaryAction={
+                                <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
+                                    开始生成
+                                </Button>
+                            }
+                        />
+                    </CreativeWorkbenchComposer>
+
+                    <CreativeWorkbenchResult status={running && pendingSummary ? <CreativeGenerationStatus {...pendingSummary} elapsedMs={elapsedMs} /> : null}>
+                        {previewLog ? (
+                            <CreativeDraftNotice
+                                tone="preview"
+                                action={
+                                    <div className="flex flex-wrap gap-2">
+                                        {previewAssetDetails.isError ? (
+                                            <Button size="small" onClick={() => void previewAssetDetails.retry()}>
+                                                重试加载
+                                            </Button>
+                                        ) : null}
+                                        <Button size="small" type="primary" loading={previewAssetDetails.isLoading} onClick={applyPreviewLog}>
+                                            用于再次创作
+                                        </Button>
                                     </div>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        className="w-full rounded-lg border border-dashed border-stone-300 px-3 py-2 text-left text-sm text-stone-500 transition hover:border-stone-500 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100"
-                                        onClick={() => setParametersCollapsed(false)}
-                                    >
-                                        参数栏已折叠；点击恢复当前模型设置
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="sticky bottom-0 z-20 mt-auto space-y-3 bg-card pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 sm:static sm:pb-0 sm:pt-6">
-                            <CreativeEstimateSummary
-                                estimate={estimate}
-                                loading={estimateLoading}
-                                error={estimateError}
-                                requestedParameters={estimateParameters}
-                                referenceCounts={{ images: references.length }}
-                                tokenLabel={estimateTokenLabel}
-                                profile={modelProfile}
-                            />
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
-                                开始生成
-                            </Button>
-                        </div>
-                    </div>
-
-                    <FyjitSurface className="thin-scrollbar p-4 lg:min-h-0 lg:overflow-y-auto lg:p-5">
-                        <div className="mb-4 flex items-center justify-between gap-3">
-                            <div>
-                                <h2 className="text-xl font-semibold">生成结果</h2>
-                            </div>
-                            {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
-                        </div>
+                                }
+                            >
+                                <>
+                                    正在预览历史记录，当前未提交草稿未改变。
+                                    {previewAssetDetails.isLoading ? " 正在加载完整素材…" : previewAssetDetails.isError ? " 完整素材加载失败，可重试。" : ""}
+                                </>
+                            </CreativeDraftNotice>
+                        ) : null}
+                        {undoDraft ? (
+                            <CreativeDraftNotice
+                                tone="undo"
+                                action={
+                                    <Button size="small" onClick={undoPreviewApply}>
+                                        撤销替换
+                                    </Button>
+                                }
+                            >
+                                历史参数已替换当前草稿。
+                            </CreativeDraftNotice>
+                        ) : null}
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
@@ -806,13 +1130,14 @@ export default function ImagePage() {
                                             onCompare={(before, after) => setComparison({ before, after })}
                                             onEdit={addResultToReferences}
                                             onDownload={downloadImage}
-                                            onSaveAsset={saveResultToAssets}
                                             onSendToVideo={sendResultToVideo}
                                         />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
+                                    ) : result.status === "asset-detail-error" ? (
+                                        <AssetDetailErrorImageCard key={result.id} error={result.error || "结果详情加载失败"} loading={result.retrying} onRetry={() => void retryResultDetails(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} />
+                                        <PendingImageCard key={result.id} phase={result.phase} progress={result.progress} elapsedMs={elapsedMs} />
                                     ),
                                 )}
                             </div>
@@ -837,9 +1162,9 @@ export default function ImagePage() {
                                 }
                             />
                         )}
-                    </FyjitSurface>
-                </section>
-            </main>
+                    </CreativeWorkbenchResult>
+                </CreativeWorkbenchContent>
+            </CreativeWorkbenchMain>
             <input
                 ref={fileInputRef}
                 id="image-reference-upload"
@@ -854,19 +1179,32 @@ export default function ImagePage() {
                 }}
             />
             <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
-                <LogPanel
-                    logs={logs}
-                    selectedLogIds={selectedLogIds}
-                    activeLogId={previewLog?.id}
-                    onSelectedLogIdsChange={setSelectedLogIds}
+                <CreativeHistoryPanel
+                    items={logs}
+                    activeItemId={previewLog?.id}
+                    disabled={running}
                     onCreateSession={createSession}
-                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                    onPreviewLog={(log) => void previewGenerationLog(log)}
+                    onSelectItem={(log) => void previewGenerationLog(log)}
+                    total={jobHistory.total}
+                    initialLoading={jobHistory.isPending}
+                    loadingMore={jobHistory.isFetchingNextPage}
+                    error={jobHistory.error instanceof Error ? jobHistory.error.message : jobHistory.isError ? "生成记录加载失败" : ""}
+                    onRetry={() => void jobHistory.refetch()}
+                    onLoadMore={() => void jobHistory.fetchNextPage()}
+                    renderCard={(log, context) => <LogCard key={log.id} log={log} active={context.active} disabled={context.disabled} onClick={context.onSelect} />}
                 />
             </Drawer>
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} projectId={projectId} onProjectChange={setProjectId} updateConfig={updateConfig} openConfigDialog={openConfigDialog} baseSizesOnly={generationMode === "text" && model.toLowerCase().includes("wan2.6")} />
+                    <GenerationSettings
+                        config={effectiveConfig}
+                        model={model}
+                        projectId={projectId}
+                        onProjectChange={setProjectId}
+                        updateConfig={updateConfig}
+                        openConfigDialog={openConfigDialog}
+                        baseSizesOnly={generationMode === "text" && model.toLowerCase().includes("wan2.6")}
+                    />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} onSelectNegativePrompt={setNegativePrompt} />
@@ -878,9 +1216,6 @@ export default function ImagePage() {
                 onInsert={(payload) => void insertPickedAsset(payload)}
                 onClose={() => setAssetPickerOpen(false)}
             />
-            <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
-                确定删除选中的 {selectedLogIds.length} 条生成记录吗？
-            </Modal>
             <Modal title="参考图与生成结果对比" open={Boolean(comparison)} onCancel={() => setComparison(undefined)} footer={null} width={960} destroyOnHidden>
                 {comparison ? (
                     <div className="grid gap-4 pt-2 sm:grid-cols-2">
@@ -895,7 +1230,7 @@ export default function ImagePage() {
                     </div>
                 ) : null}
             </Modal>
-        </div>
+        </CreativeWorkbenchRoot>
     );
 }
 
@@ -942,7 +1277,6 @@ function ResultImageCard({
     onCompare,
     onEdit,
     onDownload,
-    onSaveAsset,
     onSendToVideo,
 }: {
     image: GeneratedImage;
@@ -951,56 +1285,56 @@ function ResultImageCard({
     onCompare: (before: string, after: string) => void;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
-    onSaveAsset: (image: GeneratedImage, index: number) => void;
     onSendToVideo: (image: GeneratedImage) => void;
 }) {
     return (
-        <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <Image src={image.thumbnailUrl || image.dataUrl} preview={{ src: image.dataUrl }} alt={`生成结果 ${index + 1}`} className="aspect-square object-cover" />
-            <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
-                    <span>
-                        {image.width}x{image.height}
-                    </span>
-                    <span>{formatBytes(image.bytes)}</span>
-                    <span>{formatDuration(image.durationMs)}</span>
-                </div>
-                <div className="grid min-w-0 grid-cols-2 gap-2">
-                    <Tooltip title="添加到资产">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
-                            添加到资产
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title="加入参考图">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
-                            加入参考图
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title="下载">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
-                            下载
-                        </Button>
-                    </Tooltip>
-                    {compareImage ? (
-                        <Tooltip title="与首张参考图对比">
-                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<GitCompare className="size-3.5" />} onClick={() => onCompare(compareImage, image.dataUrl)}>
-                                前后对比
+        <CreativeResultCardShell
+            media={<Image src={image.thumbnailUrl || image.dataUrl} preview={{ src: image.dataUrl }} alt={`生成结果 ${index + 1}`} className="aspect-square object-cover" />}
+            footerClassName="space-y-2"
+            footer={
+                <>
+                    <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span>
+                            {image.width}x{image.height}
+                        </span>
+                        <span>{formatBytes(image.bytes)}</span>
+                        <span>{formatDuration(image.durationMs)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-success">已保存到素材中心</span>
+                    </div>
+                    <div className="grid min-w-0 grid-cols-2 gap-2">
+                        <Tooltip title="加入参考图">
+                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
+                                加入参考图
                             </Button>
                         </Tooltip>
-                    ) : null}
-                    <Tooltip title="送入视频创作台">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<VideoIcon className="size-3.5" />} onClick={() => void onSendToVideo(image)}>
-                            送入视频
-                        </Button>
-                    </Tooltip>
-                </div>
-            </div>
-        </div>
+                        <Tooltip title="下载">
+                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
+                                下载
+                            </Button>
+                        </Tooltip>
+                        {compareImage ? (
+                            <Tooltip title="与首张参考图对比">
+                                <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<GitCompare className="size-3.5" />} onClick={() => onCompare(compareImage, image.dataUrl)}>
+                                    前后对比
+                                </Button>
+                            </Tooltip>
+                        ) : null}
+                        <Tooltip title="送入视频创作台">
+                            <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<VideoIcon className="size-3.5" />} onClick={() => void onSendToVideo(image)}>
+                                送入视频
+                            </Button>
+                        </Tooltip>
+                    </div>
+                </>
+            }
+        />
     );
 }
 
-function PendingImageCard() {
-    return <FyjitTaskStatus tone="pending" title="生成中" description="任务已进入 FYJIT 队列；关闭页面后仍可从历史记录恢复。" className="aspect-square" />;
+function PendingImageCard({ phase, progress, elapsedMs }: { phase?: CreativeGenerationPhase; progress?: number; elapsedMs: number }) {
+    return <CreativeGenerationStatus variant="panel" phase={phase} progress={progress} elapsedMs={elapsedMs} className="aspect-square" />;
 }
 
 function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => void }) {
@@ -1026,6 +1360,29 @@ function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => voi
     );
 }
 
+function AssetDetailErrorImageCard({ error, loading, onRetry }: { error: string; loading?: boolean; onRetry: () => void }) {
+    return (
+        <FyjitTaskStatus
+            tone="error"
+            title="任务已完成，结果详情加载失败"
+            description={
+                <>
+                    <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-1 !text-xs !text-inherit">
+                        {error}
+                    </Typography.Paragraph>
+                    <span>任务已完成；重试只会重新读取结果详情，不会创建新的生成任务。</span>
+                </>
+            }
+            actions={
+                <Button size="small" type="primary" loading={loading} onClick={onRetry}>
+                    重试加载结果
+                </Button>
+            }
+            className="aspect-square"
+        />
+    );
+}
+
 function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
 }
@@ -1034,71 +1391,14 @@ function updateResultById(results: GenerationResult[], id: string, next: Partial
     return results.map((item) => (item.id === id ? { ...item, ...next } : item));
 }
 
-function LogPanel({
-    logs,
-    selectedLogIds,
-    activeLogId,
-    onSelectedLogIdsChange,
-    onCreateSession,
-    onDeleteSelected,
-    onPreviewLog,
-}: {
-    logs: GenerationLog[];
-    selectedLogIds: string[];
-    activeLogId?: string;
-    onSelectedLogIdsChange: (ids: string[]) => void;
-    onCreateSession: () => void;
-    onDeleteSelected: () => void;
-    onPreviewLog: (log: GenerationLog) => void;
-}) {
-    const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
-    const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
-
-    return (
-        <>
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                    <h2 className="text-base font-semibold">生成记录</h2>
-                </div>
-                <Tag className="m-0">{logs.length}</Tag>
-            </div>
-            <div className="mb-4 flex flex-wrap gap-2">
-                <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
-                    新建
-                </Button>
-                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAll}>
-                    {allSelected ? "取消" : "全选"}
-                </Button>
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
-                    删除
-                </Button>
-            </div>
-            <div className="space-y-3">
-                {logs.map((log) => (
-                    <LogCard
-                        key={log.id}
-                        log={log}
-                        selected={selectedLogIds.includes(log.id)}
-                        active={activeLogId === log.id}
-                        onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
-                        onClick={() => onPreviewLog(log)}
-                    />
-                ))}
-                {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">暂无生成记录</div> : null}
-            </div>
-        </>
-    );
-}
-
-function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
+function LogCard({ log, active, disabled, onClick }: { log: GenerationLog; active: boolean; disabled: boolean; onClick: () => void }) {
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
 
     return (
-        <div className={`overflow-hidden rounded-lg border transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}>
-            <button type="button" className="block w-full p-2 text-left" onClick={onClick}>
-                <div className="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
-                    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-                        <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
+        <div className={`overflow-hidden rounded-lg border transition ${active ? "border-primary bg-accent" : "border-border bg-background hover:bg-muted/50"}`}>
+            <button type="button" className="block w-full p-2 text-left disabled:cursor-not-allowed disabled:opacity-60" disabled={disabled} onClick={onClick}>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                    <div className="min-w-0">
                         <div className="min-w-0">
                             <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
                             {thumbnails.length ? (
@@ -1112,27 +1412,17 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                     </div>
                     <div className="grid justify-items-end gap-2">
                         <div className="flex gap-1">
-                            {!log.successCount && !log.failCount ? (
-                                <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "排队中" || log.status === "运行中" ? "processing" : "default"}>
-                                    {log.status}
-                                </Tag>
-                            ) : null}
-                            {log.successCount ? (
-                                <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="blue">
-                                    成功 {log.successCount}
-                                </Tag>
-                            ) : null}
+                            {!log.successCount && !log.failCount ? <CreativeStatusTag status={log.status} /> : null}
+                            {log.successCount ? <CreativeStatusTag status="成功">成功 {log.successCount}</CreativeStatusTag> : null}
                             {log.failCount ? (
-                                <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "部分成功" ? "orange" : "red"}>
+                                <CreativeStatusTag status={log.status === "部分成功" ? "部分成功" : log.status === "审核拒绝" ? "审核拒绝" : "失败"}>
                                     {log.status === "审核拒绝" ? "审核拒绝" : log.status === "部分成功" ? "部分失败" : "失败"} {log.failCount}
-                                </Tag>
+                                </CreativeStatusTag>
                             ) : null}
                         </div>
                         <div className="flex flex-wrap justify-end gap-1">
                             <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.imageCount} 张</Tag>
-                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                                {formatDuration(log.durationMs)}
-                            </Tag>
+                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{formatDuration(log.durationMs)}</Tag>
                         </div>
                         <div className="flex justify-end">
                             <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
@@ -1141,7 +1431,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                 </div>
             </button>
             {log.task.billing_status && log.task.billing_status !== "PENDING" ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone-200 px-2 py-1.5 text-xs dark:border-stone-800">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-2 py-1.5 text-xs">
                     <span>
                         实际消费 ${Number(log.task.actual_cost || 0).toFixed(4)} · {log.task.actual_quota || 0} 配额
                     </span>
@@ -1156,11 +1446,77 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function creativeJobToImageLog(job: CreativeJob): Promise<GenerationLog> {
-    const [assets, referenceAssets] = await Promise.all([
-        Promise.all((job.result_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId).catch(() => null))),
-        Promise.all((job.reference_asset_ids || []).map((assetId) => fetchCreativeAsset(assetId).catch(() => null))),
-    ]);
+type CreativeAssetHistoryRecord = CreativeAsset | CreativeAssetSummary;
+type CreativeAssetFetcher = (assetId: string) => Promise<CreativeAssetHistoryRecord | null>;
+
+const IMAGE_ASSET_TYPES = ["IMAGE", "CHARACTER", "KEYFRAME", "REFERENCE"];
+
+function generatedImageFromAsset(asset: CreativeAssetHistoryRecord, durationMs: number): GeneratedImage {
+    return {
+        id: asset.asset_id,
+        dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+        thumbnailUrl: asset.thumbnail_path,
+        durationMs,
+        width: asset.width || 0,
+        height: asset.height || 0,
+        bytes: asset.size_bytes || 0,
+        mimeType: asset.mime_type,
+    };
+}
+
+function imageReferenceFromAsset(asset: CreativeAssetHistoryRecord): ReferenceImage | null {
+    if (!IMAGE_ASSET_TYPES.includes(asset.type)) return null;
+    return {
+        id: asset.asset_id,
+        assetId: asset.asset_id,
+        name: asset.title || asset.asset_id,
+        type: asset.mime_type || "image/png",
+        dataUrl: asset.preview_path || `/api/creative/assets/${encodeURIComponent(asset.asset_id)}/content`,
+        thumbnailUrl: asset.thumbnail_path,
+    };
+}
+
+function hydrateImageLogWithAssets(log: GenerationLog, details: ReadonlyMap<string, CreativeAsset>): GenerationLog {
+    const imagesById = new Map(log.images.map((image) => [image.id, image]));
+    const images = (log.task.result_asset_ids || [])
+        .map((assetId) => {
+            const detail = details.get(assetId);
+            return detail ? generatedImageFromAsset(detail, log.durationMs) : imagesById.get(assetId);
+        })
+        .filter((image): image is GeneratedImage => Boolean(image));
+    const referencesById = new Map(log.references.map((reference) => [reference.assetId || reference.id, reference]));
+    const references = (log.task.reference_asset_ids || [])
+        .map((assetId) => {
+            const detail = details.get(assetId);
+            return detail ? imageReferenceFromAsset(detail) || referencesById.get(assetId) : referencesById.get(assetId);
+        })
+        .filter((reference): reference is ReferenceImage => Boolean(reference));
+    return {
+        ...log,
+        images: images.length ? images : log.images,
+        thumbnails: (images.length ? images : log.images).map((image) => image.thumbnailUrl || image.dataUrl),
+        references: references.length ? references : log.references,
+        fullAssetIds: uniqueCreativeAssetIds([...(log.fullAssetIds || []), ...details.keys()]),
+    };
+}
+
+function imageResultsFromLog(log: GenerationLog): GenerationResult[] {
+    if (log.status === "排队中" || log.status === "运行中") return [{ id: log.id, status: "pending" }];
+    return log.images.length ? log.images.map((image) => ({ id: image.id, status: "success" as const, image })) : [{ id: log.id, status: "failed", error: log.error || log.status }];
+}
+
+function imageResultSignature(results: GenerationResult[]) {
+    return results.map((result) => `${result.id}:${result.status}:${result.image?.dataUrl || ""}:${result.image?.thumbnailUrl || ""}`).join("|");
+}
+
+function createSummaryAssetFetcher(assets: CreativeAssetSummary[] = []): CreativeAssetFetcher {
+    const byId = new Map(assets.map((asset) => [asset.asset_id, asset]));
+    return async (assetId) => byId.get(assetId) || null;
+}
+
+async function creativeJobToImageLog(job: CreativeJob, fetchAsset: CreativeAssetFetcher = (assetId) => fetchCreativeAsset(assetId).catch(() => null)): Promise<GenerationLog> {
+    const [assets, referenceAssets] = await Promise.all([Promise.all((job.result_asset_ids || []).map(fetchAsset)), Promise.all((job.reference_asset_ids || []).map(fetchAsset))]);
+    const fullAssetIds = uniqueCreativeAssetIds([...assets, ...referenceAssets].filter(isCreativeAssetDetail).map((asset) => asset.asset_id));
     const images: GeneratedImage[] = assets
         .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset))
         .map((asset) => ({
@@ -1206,34 +1562,13 @@ async function creativeJobToImageLog(job: CreativeJob): Promise<GenerationLog> {
         imageCount: requestedCount,
         size: config.size,
         quality: config.quality,
-        status: creativeImageStatusLabel(job.status),
+        status: creativeJobStatusLabel(job.status),
         images,
         thumbnails: images.map((image) => image.thumbnailUrl || image.dataUrl),
         task: job,
+        fullAssetIds,
         error: job.error,
     };
-}
-
-function creativeImageStatusLabel(status: CreativeJob["status"]): GenerationLog["status"] {
-    switch (status) {
-        case "CREATED":
-        case "QUEUED":
-            return "排队中";
-        case "RUNNING":
-            return "运行中";
-        case "SUCCEEDED":
-            return "成功";
-        case "PARTIAL_SUCCESS":
-            return "部分成功";
-        case "MODERATION_REJECTED":
-            return "审核拒绝";
-        case "CANCELLED":
-            return "已取消";
-        case "EXPIRED":
-            return "已超时";
-        default:
-            return "失败";
-    }
 }
 
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {

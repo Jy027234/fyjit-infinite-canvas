@@ -340,26 +340,29 @@ function InfiniteCanvasPage() {
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
-    const stopGenerationByRunningId = useCallback(async (runningId: string) => {
-        const affectedNodeIds = new Set<string>();
-        const jobIds = new Set<string>();
-        generationRequestsRef.current.forEach((request) => {
-            if (request.runningNodeId !== runningId) return;
-            request.controller.abort();
-            request.jobIds.forEach((jobId) => jobIds.add(jobId));
-            generationRequestsRef.current.delete(request.targetNodeId);
-            affectedNodeIds.add(request.targetNodeId);
-            affectedNodeIds.add(request.originNodeId);
-        });
-        setRunningNodeId((current) => (current === runningId ? null : current));
-        if (!affectedNodeIds.size) return;
-        setNodes((prev) => prev.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
-        if (!jobIds.size) return;
-        const results = await Promise.allSettled(Array.from(jobIds, (jobId) => cancelCreativeJob(jobId)));
-        const failed = results.filter((result) => result.status === "rejected").length;
-        if (failed) message.warning(`${jobIds.size - failed} 个任务已取消，${failed} 个任务取消失败，可在生成记录中继续查看状态`);
-        else message.success("服务端生成任务已取消");
-    }, [message]);
+    const stopGenerationByRunningId = useCallback(
+        async (runningId: string) => {
+            const affectedNodeIds = new Set<string>();
+            const jobIds = new Set<string>();
+            generationRequestsRef.current.forEach((request) => {
+                if (request.runningNodeId !== runningId) return;
+                request.controller.abort();
+                request.jobIds.forEach((jobId) => jobIds.add(jobId));
+                generationRequestsRef.current.delete(request.targetNodeId);
+                affectedNodeIds.add(request.targetNodeId);
+                affectedNodeIds.add(request.originNodeId);
+            });
+            setRunningNodeId((current) => (current === runningId ? null : current));
+            if (!affectedNodeIds.size) return;
+            setNodes((prev) => prev.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
+            if (!jobIds.size) return;
+            const results = await Promise.allSettled(Array.from(jobIds, (jobId) => cancelCreativeJob(jobId)));
+            const failed = results.filter((result) => result.status === "rejected").length;
+            if (failed) message.warning(`${jobIds.size - failed} 个任务已取消，${failed} 个任务取消失败，可在生成记录中继续查看状态`);
+            else message.success("服务端生成任务已取消");
+        },
+        [message],
+    );
 
     const confirmStopGeneration = useCallback(
         (nodeId: string) => {
@@ -1881,7 +1884,13 @@ function InfiniteCanvasPage() {
             setDialogNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
-                const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(childId, controller, jobId) }).then((items) => items[0]);
+                const image = await requestEdit(
+                    generationConfig,
+                    prompt,
+                    [source],
+                    { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl },
+                    { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(childId, controller, jobId) },
+                ).then((items) => items[0]);
                 const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
@@ -2360,7 +2369,9 @@ function InfiniteCanvasPage() {
                         targetIds.map(async (targetId) => {
                             try {
                                 const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(targetId, controller, jobId) }).then((items) => items[0])
+                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(targetId, controller, jobId) }).then(
+                                          (items) => items[0],
+                                      )
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(targetId, controller, jobId) }).then((items) => items[0]);
                                 const uploaded = { ...(await uploadImage(image.dataUrl)), assetId: image.id };
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
@@ -2459,7 +2470,10 @@ function InfiniteCanvasPage() {
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
                         const video = await storeGeneratedVideo(
-                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(videoId, controller, jobId) }),
+                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, {
+                                signal: controller.signal,
+                                onJobId: (jobId) => registerGenerationJob(videoId, controller, jobId),
+                            }),
                         );
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                         setNodes((prev) =>
@@ -2686,7 +2700,12 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal, onJobId: (jobId) => registerGenerationJob(node.id, controller, jobId) }));
+                    const video = await storeGeneratedVideo(
+                        await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], {
+                            signal: controller.signal,
+                            onJobId: (jobId) => registerGenerationJob(node.id, controller, jobId),
+                        }),
+                    );
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) =>
                         prev.map((item) =>
@@ -2862,6 +2881,23 @@ function InfiniteCanvasPage() {
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));
+            } else if (payload.kind === "audio") {
+                const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
+                const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
+                const id = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                setNodes((prev) => [
+                    ...prev,
+                    {
+                        id,
+                        type: CanvasNodeType.Audio,
+                        title: payload.title,
+                        position: { x: center.x - spec.width / 2, y: center.y - spec.height / 2 },
+                        width: spec.width,
+                        height: spec.height,
+                        metadata: { content: payload.url, mimeType: payload.mimeType, storageKey: payload.storageKey, assetId: payload.assetId, durationMs: payload.durationMs, status: NODE_STATUS_SUCCESS },
+                    },
+                ]);
+                setSelectedNodeIds(new Set([id]));
             } else {
                 void insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, thumbnailUrl: payload.thumbnailUrl, storageKey: payload.storageKey, assetId: payload.assetId });
             }
@@ -2997,8 +3033,9 @@ function InfiniteCanvasPage() {
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
-                    onHome={() => void runAfterCurrentProjectSaved(() => navigate("/"))}
-                    onProjects={() => void runAfterCurrentProjectSaved(() => navigate("/canvas"))}
+                    onImageWorkbench={() => navigate("/")}
+                    onCanvasLibrary={() => navigate("/canvas")}
+                    onNavigateAway={(action) => void runAfterCurrentProjectSaved(action)}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}

@@ -1,17 +1,18 @@
 import { Copy, Files, Heart, History, Link, PencilLine, Plus, Search, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Card, Drawer, Empty, Form, Input, Modal, Pagination, Select, Space, Switch, Tag, Typography } from "antd";
+import { Alert, App, Button, Card, Drawer, Empty, Form, Input, Modal, Pagination, Select, Space, Spin, Switch, Tag, Typography } from "antd";
 
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useCreativePromptList } from "@/hooks/use-creative-prompt-list";
 import { randomId } from "@/lib/utils";
 import {
     createCreativePrompt,
+    createCreativeIntent,
     createCreativeJob,
     createCreativeTextAsset,
     deleteCreativePrompt,
     duplicateCreativePrompt,
     fetchCreativePromptRevisions,
-    fetchCreativePrompts,
     fetchCreativeAsset,
     updateCreativePrompt,
     waitForCreativeJob,
@@ -32,22 +33,39 @@ const categoryOptions = [
     { label: "影视", value: "film" },
 ];
 
+const PROMPT_LIBRARY_STATE_KEY = "fyjit:prompt-library:view:v1";
+
+type PromptLibraryState = {
+    page: number;
+    pageSize: number;
+    search: string;
+    category: string;
+    promptType: string;
+    tag: string;
+    sourceType: string;
+    favorite: boolean;
+    scrollTop: number;
+};
+
+const defaultPromptLibraryState: PromptLibraryState = { page: 1, pageSize: 24, search: "", category: "", promptType: "", tag: "", sourceType: "", favorite: false, scrollTop: 0 };
+
 export default function PromptsPage() {
     const { message } = App.useApp();
     const copyText = useCopyText();
     const importInputRef = useRef<HTMLInputElement>(null);
+    const listScrollRef = useRef<HTMLElement>(null);
+    const restoredScrollRef = useRef(false);
+    const [initialLibraryState] = useState(readPromptLibraryState);
     const [form] = Form.useForm<PromptFormValues>();
-    const [items, setItems] = useState<CreativePrompt[]>([]);
-    const [total, setTotal] = useState(0);
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(24);
-    const [search, setSearch] = useState("");
-    const [category, setCategory] = useState("");
-    const [promptType, setPromptType] = useState("");
-    const [tag, setTag] = useState("");
-    const [sourceType, setSourceType] = useState("");
-    const [favorite, setFavorite] = useState(false);
-    const [loading, setLoading] = useState(false);
+    const [page, setPage] = useState(initialLibraryState.page);
+    const [pageSize, setPageSize] = useState(initialLibraryState.pageSize);
+    const [search, setSearch] = useState(initialLibraryState.search);
+    const [debouncedSearch, setDebouncedSearch] = useState(initialLibraryState.search);
+    const [category, setCategory] = useState(initialLibraryState.category);
+    const [promptType, setPromptType] = useState(initialLibraryState.promptType);
+    const [tag, setTag] = useState(initialLibraryState.tag);
+    const [sourceType, setSourceType] = useState(initialLibraryState.sourceType);
+    const [favorite, setFavorite] = useState(initialLibraryState.favorite);
     const [editing, setEditing] = useState<CreativePrompt>();
     const [formOpen, setFormOpen] = useState(false);
     const [selected, setSelected] = useState<CreativePrompt>();
@@ -55,42 +73,46 @@ export default function PromptsPage() {
     const [refining, setRefining] = useState<CreativePrompt>();
     const [refinedText, setRefinedText] = useState("");
     const [refiningLoading, setRefiningLoading] = useState(false);
-    const fyjitModels = useFyjitStore((state) => state.models);
-    const fyjitTokens = useFyjitStore((state) => state.tokens);
+    const modelsStatus = useFyjitStore((state) => state.modelsStatus);
+    const tokensStatus = useFyjitStore((state) => state.tokensStatus);
+    const loadModels = useFyjitStore((state) => state.loadModels);
+    const loadTokens = useFyjitStore((state) => state.loadTokens);
 
-    const refresh = async (signal?: AbortSignal) => {
-        setLoading(true);
-        try {
-            const result = await fetchCreativePrompts({
-                page,
-                pageSize,
-                search: search.trim() || undefined,
-                category: category || undefined,
-                promptType: promptType || undefined,
-                tag: tag.trim() || undefined,
-                sourceType: sourceType || undefined,
-                favorite,
-                signal,
-            });
-            setItems(result.items || []);
-            setTotal(result.total || 0);
-        } catch (error) {
-            if (!signal?.aborted) message.error(error instanceof Error ? error.message : "提示词读取失败");
-        } finally {
-            if (!signal?.aborted) setLoading(false);
-        }
-    };
+    const {
+        items,
+        total,
+        error,
+        isFetching,
+        invalidate: invalidatePromptList,
+    } = useCreativePromptList({
+        page,
+        pageSize,
+        search: debouncedSearch,
+        category,
+        promptType,
+        tag,
+        sourceType,
+        favorite,
+    });
 
     useEffect(() => {
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => void refresh(controller.signal), 250);
-        return () => {
-            window.clearTimeout(timer);
-            controller.abort();
-        };
-        // refresh is derived from the active server-side paging and filters.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [category, favorite, page, pageSize, promptType, search, sourceType, tag]);
+        const timer = window.setTimeout(() => setDebouncedSearch(search), 250);
+        return () => window.clearTimeout(timer);
+    }, [search]);
+
+    useEffect(() => {
+        if (error) message.error(error instanceof Error ? error.message : "提示词读取失败");
+    }, [error, message]);
+
+    useEffect(() => {
+        writePromptLibraryState({ page, pageSize, search, category, promptType, tag, sourceType, favorite, scrollTop: restoredScrollRef.current ? listScrollRef.current?.scrollTop || 0 : initialLibraryState.scrollTop });
+    }, [category, favorite, initialLibraryState.scrollTop, page, pageSize, promptType, search, sourceType, tag]);
+
+    useEffect(() => {
+        if (isFetching || restoredScrollRef.current || !listScrollRef.current) return;
+        restoredScrollRef.current = true;
+        listScrollRef.current.scrollTop = initialLibraryState.scrollTop;
+    }, [initialLibraryState.scrollTop, isFetching]);
 
     const openCreate = () => {
         setEditing(undefined);
@@ -145,7 +167,7 @@ export default function PromptsPage() {
             message.success(editing ? "提示词已更新并生成新版本" : "提示词已创建");
             setFormOpen(false);
             setEditing(undefined);
-            await refresh();
+            await invalidatePromptList();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "提示词保存失败");
         }
@@ -155,7 +177,7 @@ export default function PromptsPage() {
         try {
             await action();
             message.success(success);
-            await refresh();
+            await invalidatePromptList();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "操作失败");
         }
@@ -179,22 +201,32 @@ export default function PromptsPage() {
                 imported += 1;
             }
             message.success(`已导入 ${imported} 条提示词`);
-            await refresh();
+            await invalidatePromptList();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "提示词导入失败");
         }
     };
 
     const refinePrompt = async (prompt: CreativePrompt) => {
-        const textModel = fyjitModels.find((item) => item.capabilities.includes("text_generation"));
-        if (!textModel || !fyjitTokens.length) {
-            message.warning("当前账号缺少可用文本模型或本站 Token");
-            return;
-        }
         setRefining(prompt);
         setRefinedText("");
         setRefiningLoading(true);
         try {
+            if (modelsStatus !== "ready" || tokensStatus !== "ready") {
+                await Promise.all([modelsStatus === "ready" ? undefined : loadModels(), tokensStatus === "ready" ? undefined : loadTokens()]);
+            }
+            const resourceState = useFyjitStore.getState();
+            if (resourceState.modelsStatus === "error" || resourceState.tokensStatus === "error") {
+                message.error(resourceState.modelsError || resourceState.tokensError || "模型或本站 Token 加载失败，请重试");
+                setRefining(undefined);
+                return;
+            }
+            const textModel = resourceState.models.find((item) => item.capabilities.includes("text_generation"));
+            if (!textModel || !resourceState.tokens.length) {
+                message.warning("当前账号缺少可用文本模型或本站 Token");
+                setRefining(undefined);
+                return;
+            }
             const job = await createCreativeJob({
                 capability: "text_generation",
                 model: textModel.id,
@@ -228,7 +260,23 @@ export default function PromptsPage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-4 py-6 [background-size:16px_16px] sm:px-6 lg:py-8 dark:bg-[radial-gradient(rgba(245,245,244,.14)_1px,transparent_1px)]">
+            <main
+                ref={listScrollRef}
+                className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-4 py-6 [background-size:16px_16px] sm:px-6 lg:py-8 dark:bg-[radial-gradient(rgba(245,245,244,.14)_1px,transparent_1px)]"
+                onScroll={(event) =>
+                    writePromptLibraryState({
+                        page,
+                        pageSize,
+                        search,
+                        category,
+                        promptType,
+                        tag,
+                        sourceType,
+                        favorite,
+                        scrollTop: event.currentTarget.scrollTop,
+                    })
+                }
+            >
                 <div className="mx-auto max-w-7xl">
                     <div className="text-center">
                         <h1 className="text-3xl font-semibold tracking-tight text-stone-950 dark:text-stone-100">提示词库</h1>
@@ -315,22 +363,41 @@ export default function PromptsPage() {
                         </Button>
                     </div>
 
-                    <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-busy={loading}>
+                    <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-busy={isFetching}>
                         {items.map((prompt) => (
                             <PromptCard
                                 key={prompt.prompt_id}
                                 prompt={prompt}
                                 onOpen={() => setSelected(prompt)}
-                                onEdit={() => openEdit(prompt)}
+                                onEdit={prompt.catalog ? undefined : () => openEdit(prompt)}
                                 onCopy={() => copyText(prompt.content, "提示词已复制")}
-                                onFavorite={() => void runAction(() => updateCreativePrompt(prompt.prompt_id, { favorite: !prompt.favorite }), prompt.favorite ? "已取消收藏" : "已收藏")}
-                                onDuplicate={() => void runAction(() => duplicateCreativePrompt(prompt.prompt_id), "已复制为新的提示词")}
-                                onRefine={() => void refinePrompt(prompt)}
-                                onDelete={() => setDeleting(prompt)}
+                                onFavorite={prompt.catalog ? undefined : () => void runAction(() => updateCreativePrompt(prompt.prompt_id, { favorite: !prompt.favorite }), prompt.favorite ? "已取消收藏" : "已收藏")}
+                                onDuplicate={() => void runAction(() => duplicateCreativePrompt(prompt.prompt_id), prompt.catalog ? "已保存到我的提示词" : "已复制为新的提示词")}
+                                onRefine={prompt.catalog ? undefined : () => void refinePrompt(prompt)}
+                                onDelete={prompt.catalog ? undefined : () => setDeleting(prompt)}
                             />
                         ))}
                     </div>
-                    {!items.length && !loading ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有匹配的提示词" className="py-20" /> : null}
+                    {isFetching && !items.length ? (
+                        <div className="flex min-h-64 items-center justify-center" role="status">
+                            <Spin tip="正在读取提示词库…" />
+                        </div>
+                    ) : null}
+                    {error && !items.length ? (
+                        <Alert
+                            className="my-10"
+                            type="error"
+                            showIcon
+                            message="提示词库加载失败"
+                            description={error instanceof Error ? error.message : "暂时无法读取提示词"}
+                            action={
+                                <Button size="small" danger onClick={() => void invalidatePromptList()}>
+                                    重试加载
+                                </Button>
+                            }
+                        />
+                    ) : null}
+                    {!items.length && !isFetching && !error ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有匹配的提示词" className="py-20" /> : null}
                     <div className="mt-8 flex justify-center">
                         <Pagination
                             current={page}
@@ -459,6 +526,10 @@ export default function PromptsPage() {
                 onSaveAsset={async (prompt, rendered) => {
                     await runAction(() => createCreativeTextAsset({ title: prompt.title, content: rendered, notes: `来自提示词 ${prompt.prompt_id} v${prompt.version}`, tags: prompt.tags }), "已保存到素材中心");
                 }}
+                onUseInImage={async (_prompt, rendered, renderedNegative) => {
+                    const intent = await createCreativeIntent("image", { prompt: rendered, negative_prompt: renderedNegative || undefined });
+                    window.location.assign(new URL(`image?intent=${encodeURIComponent(intent.id)}`, document.baseURI).toString());
+                }}
             />
 
             <Modal
@@ -493,12 +564,12 @@ function PromptCard({
 }: {
     prompt: CreativePrompt;
     onOpen: () => void;
-    onEdit: () => void;
+    onEdit?: () => void;
     onCopy: () => void;
-    onFavorite: () => void;
+    onFavorite?: () => void;
     onDuplicate: () => void;
-    onRefine: () => void;
-    onDelete: () => void;
+    onRefine?: () => void;
+    onDelete?: () => void;
 }) {
     return (
         <Card hoverable className="overflow-hidden" styles={{ body: { padding: 0 } }}>
@@ -521,7 +592,7 @@ function PromptCard({
                     ) : null}
                     {prompt.source_type === "external" ? (
                         <Tag color="gold" className="m-0 text-[11px]">
-                            外部来源
+                            {prompt.catalog ? "系统模板" : "外部来源"}
                         </Tag>
                     ) : null}
                     {(prompt.tags || []).slice(0, 3).map((tag) => (
@@ -535,34 +606,60 @@ function PromptCard({
                 <Button size="small" icon={<Copy className="size-3.5" />} onClick={onCopy}>
                     复制
                 </Button>
-                <Button size="small" icon={<Heart className="size-3.5" fill={prompt.favorite ? "currentColor" : "none"} />} onClick={onFavorite}>
-                    {prompt.favorite ? "已收藏" : "收藏"}
-                </Button>
-                <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
-                    编辑
-                </Button>
+                {onFavorite ? (
+                    <Button size="small" icon={<Heart className="size-3.5" fill={prompt.favorite ? "currentColor" : "none"} />} onClick={onFavorite}>
+                        {prompt.favorite ? "已收藏" : "收藏"}
+                    </Button>
+                ) : null}
+                {onEdit ? (
+                    <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
+                        编辑
+                    </Button>
+                ) : null}
                 <Button size="small" icon={<Files className="size-3.5" />} onClick={onDuplicate}>
-                    副本
+                    {prompt.catalog ? "保存到我的提示词" : "副本"}
                 </Button>
-                <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={onRefine}>
-                    AI 精修
-                </Button>
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
-                    删除
-                </Button>
+                {onRefine ? (
+                    <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={onRefine}>
+                        AI 精修
+                    </Button>
+                ) : null}
+                {onDelete ? (
+                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
+                        删除
+                    </Button>
+                ) : null}
             </div>
         </Card>
     );
 }
 
-function PromptDrawer({ prompt, onClose, onCopy, onSaveAsset }: { prompt?: CreativePrompt; onClose: () => void; onCopy: (value: string, message?: string) => void; onSaveAsset: (prompt: CreativePrompt, rendered: string) => Promise<void> }) {
+function PromptDrawer({
+    prompt,
+    onClose,
+    onCopy,
+    onSaveAsset,
+    onUseInImage,
+}: {
+    prompt?: CreativePrompt;
+    onClose: () => void;
+    onCopy: (value: string, message?: string) => void;
+    onSaveAsset: (prompt: CreativePrompt, rendered: string) => Promise<void>;
+    onUseInImage: (prompt: CreativePrompt, rendered: string, renderedNegative: string) => Promise<void>;
+}) {
+    const { message } = App.useApp();
     const [values, setValues] = useState<Record<string, string>>({});
     const [revisions, setRevisions] = useState<CreativePromptRevision[]>([]);
+    const [useLoading, setUseLoading] = useState(false);
+    const [showVariableErrors, setShowVariableErrors] = useState(false);
     const variables = useMemo(() => (prompt ? extractVariables(prompt.content, prompt.variables) : []), [prompt]);
     const rendered = useMemo(() => renderPrompt(prompt?.content || "", values), [prompt?.content, values]);
+    const renderedNegative = useMemo(() => renderPrompt(prompt?.negative_prompt || "", values), [prompt?.negative_prompt, values]);
+    const missingRequiredVariables = variables.filter((variable) => variable.required && !values[variable.name]?.trim());
 
     useEffect(() => {
         if (!prompt) return;
+        setShowVariableErrors(false);
         setValues(Object.fromEntries(extractVariables(prompt.content, prompt.variables).map((variable) => [variable.name, variable.default || ""])));
         const controller = new AbortController();
         void fetchCreativePromptRevisions(prompt.prompt_id, controller.signal)
@@ -571,6 +668,22 @@ function PromptDrawer({ prompt, onClose, onCopy, onSaveAsset }: { prompt?: Creat
         return () => controller.abort();
     }, [prompt]);
 
+    const useInImage = async () => {
+        if (!prompt) return;
+        if (missingRequiredVariables.length) {
+            setShowVariableErrors(true);
+            message.warning(`请先填写必填变量：${missingRequiredVariables.map((variable) => variable.label || variable.name).join("、")}`);
+            return;
+        }
+        setUseLoading(true);
+        try {
+            await onUseInImage(prompt, rendered, renderedNegative);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "无法打开生图工作台");
+            setUseLoading(false);
+        }
+    };
+
     return (
         <Drawer title={prompt?.title || "提示词详情"} open={Boolean(prompt)} size="large" onClose={onClose}>
             {prompt ? (
@@ -578,6 +691,7 @@ function PromptDrawer({ prompt, onClose, onCopy, onSaveAsset }: { prompt?: Creat
                     <div className="flex flex-wrap gap-2">
                         <Tag color="purple">{prompt.prompt_type || "general"}</Tag>
                         <Tag color="blue">{prompt.category || "general"}</Tag>
+                        {prompt.catalog ? <Tag color="gold">系统模板 · 只读</Tag> : null}
                         <Tag>版本 v{prompt.version}</Tag>
                         {prompt.tags.map((tag) => (
                             <Tag key={tag}>{tag}</Tag>
@@ -606,7 +720,12 @@ function PromptDrawer({ prompt, onClose, onCopy, onSaveAsset }: { prompt?: Creat
                                             {variable.label || variable.name}
                                             {variable.required ? " *" : ""}
                                         </span>
-                                        <Input value={values[variable.name] || ""} onChange={(event) => setValues((current) => ({ ...current, [variable.name]: event.target.value }))} />
+                                        <Input
+                                            value={values[variable.name] || ""}
+                                            status={showVariableErrors && variable.required && !values[variable.name]?.trim() ? "error" : undefined}
+                                            aria-required={variable.required}
+                                            onChange={(event) => setValues((current) => ({ ...current, [variable.name]: event.target.value }))}
+                                        />
                                     </label>
                                 ))}
                             </div>
@@ -623,7 +742,10 @@ function PromptDrawer({ prompt, onClose, onCopy, onSaveAsset }: { prompt?: Creat
                         </section>
                     ) : null}
                     <Space wrap>
-                        <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(rendered, "最终提示词已复制")}>
+                        <Button type="primary" icon={<Sparkles className="size-4" />} loading={useLoading} onClick={() => void useInImage()}>
+                            用于生图
+                        </Button>
+                        <Button icon={<Copy className="size-4" />} onClick={() => onCopy(rendered, "最终提示词已复制")}>
                             复制最终提示词
                         </Button>
                         <Button onClick={() => void onSaveAsset(prompt, rendered)}>保存为文本素材</Button>
@@ -650,6 +772,37 @@ function PromptDrawer({ prompt, onClose, onCopy, onSaveAsset }: { prompt?: Creat
             ) : null}
         </Drawer>
     );
+}
+
+function readPromptLibraryState(): PromptLibraryState {
+    if (typeof window === "undefined") return defaultPromptLibraryState;
+    try {
+        const raw = window.sessionStorage.getItem(PROMPT_LIBRARY_STATE_KEY);
+        if (!raw) return defaultPromptLibraryState;
+        const saved = JSON.parse(raw) as Partial<PromptLibraryState>;
+        return {
+            page: Number.isInteger(saved.page) && Number(saved.page) > 0 ? Number(saved.page) : defaultPromptLibraryState.page,
+            pageSize: [12, 24, 48, 96].includes(Number(saved.pageSize)) ? Number(saved.pageSize) : defaultPromptLibraryState.pageSize,
+            search: typeof saved.search === "string" ? saved.search : "",
+            category: typeof saved.category === "string" ? saved.category : "",
+            promptType: typeof saved.promptType === "string" ? saved.promptType : "",
+            tag: typeof saved.tag === "string" ? saved.tag : "",
+            sourceType: typeof saved.sourceType === "string" ? saved.sourceType : "",
+            favorite: saved.favorite === true,
+            scrollTop: typeof saved.scrollTop === "number" && saved.scrollTop > 0 ? saved.scrollTop : 0,
+        };
+    } catch {
+        return defaultPromptLibraryState;
+    }
+}
+
+function writePromptLibraryState(state: PromptLibraryState) {
+    if (typeof window === "undefined") return;
+    try {
+        window.sessionStorage.setItem(PROMPT_LIBRARY_STATE_KEY, JSON.stringify(state));
+    } catch {
+        // Private browsing or storage policies may disable session storage.
+    }
 }
 
 function extractVariables(content: string, existing: CreativePromptVariable[] = []) {

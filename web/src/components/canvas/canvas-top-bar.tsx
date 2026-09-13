@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Camera, Check, CloudOff, Download, History, Home, Images, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Save, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, Camera, Check, CloudOff, Download, History, Home, LoaderCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Save, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { CreativeAccountMenu } from "@/components/layout/creative-account-menu";
+import { preloadAgentPanel } from "@/components/agent/agent-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useCanvasStore, type CanvasSyncStatus } from "@/stores/canvas/use-canvas-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
+import { useCreativeNavigationTools } from "@/hooks/use-creative-navigation-tools";
+import { FYJIT_HOME_URL } from "@/constant/runtime-config";
+import { useFyjitInterface } from "@/hooks/use-fyjit-interface";
 
 export function CanvasTopBar({
     title,
@@ -20,8 +25,9 @@ export function CanvasTopBar({
     onCancelTitleEditing,
     canUndo,
     canRedo,
-    onHome,
-    onProjects,
+    onImageWorkbench,
+    onCanvasLibrary,
+    onNavigateAway,
     onCreateProject,
     onDeleteProject,
     onExportProject,
@@ -44,8 +50,9 @@ export function CanvasTopBar({
     onCancelTitleEditing: () => void;
     canUndo: boolean;
     canRedo: boolean;
-    onHome: () => void;
-    onProjects: () => void;
+    onImageWorkbench: () => void;
+    onCanvasLibrary: () => void;
+    onNavigateAway: (action: () => void | Promise<void>) => void;
     onCreateProject: () => void;
     onDeleteProject: () => void;
     onExportProject: () => void;
@@ -61,10 +68,18 @@ export function CanvasTopBar({
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
+    const navigate = useNavigate();
+    const creativeTools = useCreativeNavigationTools();
+    const { t } = useFyjitInterface();
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
     const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
+    const handleAgentIntent = () => preloadAgentPanel();
+    const handleToggleAgent = () => {
+        preloadAgentPanel();
+        onToggleAgent();
+    };
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -77,7 +92,7 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between pl-1 pr-4">
+            <div className="pointer-events-none absolute left-0 right-0 top-0 z-[60] flex h-16 items-center justify-between pl-1 pr-4">
                 <div className="pointer-events-auto flex min-w-0 items-center gap-2">
                     <Tooltip title={sidePanelOpen ? "收起面板" : "展开面板"}>
                         <button
@@ -93,10 +108,19 @@ export function CanvasTopBar({
                     <Dropdown
                         trigger={["click"]}
                         menu={{
+                            selectedKeys: ["tool-canvas"],
                             items: [
-                                { key: "home", icon: <Home className="size-4" />, label: "主页", onClick: onHome },
+                                ...creativeTools.map((tool) => {
+                                    const Icon = tool.icon;
+                                    return {
+                                        key: `tool-${tool.slug}`,
+                                        icon: <Icon className="size-4" />,
+                                        label: tool.label,
+                                        onClick: () => onNavigateAway(tool.slug === "image" ? onImageWorkbench : tool.slug === "canvas" ? onCanvasLibrary : () => navigate(tool.href)),
+                                    };
+                                }),
+                                { type: "divider" as const },
                                 { key: "docs", icon: <BookOpen className="size-4" />, label: "文档", onClick: () => window.open(DOCS_URL, "_blank", "noopener,noreferrer") },
-                                { key: "projects", icon: <Images className="size-4" />, label: "我的画布", onClick: onProjects },
                                 { type: "divider" },
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
                                 { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
@@ -143,11 +167,26 @@ export function CanvasTopBar({
                     </div>
                     <CanvasSaveStatus />
                     <div className="hidden md:block">
-                        <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
+                        <CompactAgentStatus status={compactAgentStatus} onClick={handleToggleAgent} onIntent={handleAgentIntent} />
                     </div>
                 </div>
 
-                <div className="pointer-events-auto flex items-center gap-1.5">
+                <div className="pointer-events-auto relative flex items-center gap-1.5">
+                    <Tooltip title={t("backToFyjit")}>
+                        <a
+                            href={FYJIT_HOME_URL}
+                            className="grid size-9 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10"
+                            style={{ color: theme.node.text }}
+                            aria-label={t("backToFyjit")}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                onNavigateAway(() => window.location.assign(FYJIT_HOME_URL));
+                            }}
+                        >
+                            <Home className="size-4" />
+                        </a>
+                    </Tooltip>
+                    <CreativeAccountMenu variant="compact" showTheme triggerStyle={{ color: theme.node.text }} beforeLeave={onNavigateAway} />
                     <div className="hidden sm:block">
                         <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
                     </div>
@@ -157,7 +196,9 @@ export function CanvasTopBar({
                         className="!h-10 !rounded-xl !px-3 !font-medium"
                         style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
                         icon={<Bot className="size-4" />}
-                        onClick={onToggleAgent}
+                        onPointerEnter={handleAgentIntent}
+                        onFocus={handleAgentIntent}
+                        onClick={handleToggleAgent}
                     >
                         <span className="hidden sm:inline">Agent</span>
                     </Button>
@@ -199,7 +240,7 @@ function CanvasSaveStatus() {
                 disabled={status === "saving"}
                 onClick={() => void saveProject(id)}
                 className="flex h-8 items-center gap-1.5 px-1 text-xs transition hover:opacity-70 disabled:cursor-wait disabled:opacity-70"
-                style={{ color: status === "error" ? "#ef4444" : status === "dirty" ? "#d97706" : theme.node.muted }}
+                style={{ color: status === "error" ? "var(--destructive)" : status === "dirty" ? "var(--warning)" : theme.node.muted }}
                 aria-label={config.tooltip}
             >
                 <config.Icon className={`size-3.5 ${status === "saving" ? "animate-spin" : ""}`} />
@@ -225,13 +266,21 @@ function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
     );
 }
 
-function CompactAgentStatus({ status, onClick }: { status: { connected: boolean; enabled: boolean; activity: string }; onClick: () => void }) {
+function CompactAgentStatus({ status, onClick, onIntent }: { status: { connected: boolean; enabled: boolean; activity: string }; onClick: () => void; onIntent: () => void }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
     const label = status.connected ? "Codex 已连接" : status.enabled ? `Codex ${status.activity || "连接中"}` : "Codex 未连接";
-    const dotColor = status.connected ? "#22c55e" : status.enabled ? "#f59e0b" : theme.node.muted;
+    const dotColor = status.connected ? "var(--success)" : status.enabled ? "var(--warning)" : theme.node.muted;
     return (
-        <button type="button" className="flex h-8 items-center gap-1.5 text-xs transition hover:opacity-75" style={{ color: status.connected ? "#16a34a" : status.enabled ? "#d97706" : theme.node.muted }} onClick={onClick} title="打开本地 Codex 面板">
+        <button
+            type="button"
+            className="flex h-8 items-center gap-1.5 text-xs transition hover:opacity-75"
+            style={{ color: status.connected ? "var(--success)" : status.enabled ? "var(--warning)" : theme.node.muted }}
+            onPointerEnter={onIntent}
+            onFocus={onIntent}
+            onClick={onClick}
+            title="打开本地 Codex 面板"
+        >
             <span className="size-2 rounded-full" style={{ background: dotColor }} />
             <span className="max-w-[140px] truncate">{label}</span>
         </button>

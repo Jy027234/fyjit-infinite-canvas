@@ -7,6 +7,7 @@ import {
     createCreativePrompt,
     creativeRequest,
     fetchCreativeAssets,
+    fetchCreativeJobs,
     fetchCreativeProjects,
     fetchCreativePrompts,
     fetchCreativePromptRevisions,
@@ -63,11 +64,7 @@ describe("creativeRequest", () => {
     });
 
     test("exposes an actionable retry delay for creative rate limits", async () => {
-        globalThis.fetch = (async () =>
-            Response.json(
-                { success: false, code: "rate_limit_exceeded", message: "请求过于频繁，请稍后重试", retry_after: 9 },
-                { status: 429, headers: { "Retry-After": "9" } },
-            )) as unknown as typeof fetch;
+        globalThis.fetch = (async () => Response.json({ success: false, code: "rate_limit_exceeded", message: "请求过于频繁，请稍后重试", retry_after: 9 }, { status: 429, headers: { "Retry-After": "9" } })) as unknown as typeof fetch;
 
         await expect(creativeRequest("/estimates")).rejects.toMatchObject({
             status: 429,
@@ -110,6 +107,18 @@ describe("Creative API contracts", () => {
         expect(uploadBody instanceof FormData ? uploadBody.get("project_id") : undefined).toBe("project-7");
     });
 
+    test("requests paginated job history with asset summaries", async () => {
+        let input = "";
+        globalThis.fetch = (async (request: string | URL | Request) => {
+            input = String(request);
+            return Response.json({ data: { items: [], assets: [], total: 21, page: 2, page_size: 20 } });
+        }) as unknown as typeof fetch;
+
+        await fetchCreativeJobs({ page: 2, pageSize: 20, capability: "image_generation", includeAssets: "summary" });
+
+        expect(input).toBe("/api/creative/jobs?page=2&page_size=20&capability=image_generation&include_assets=summary");
+    });
+
     test("uses the general creative project endpoints", async () => {
         const requests: Array<{ input: string; init?: RequestInit }> = [];
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -121,11 +130,7 @@ describe("Creative API contracts", () => {
         await fetchCreativeProjects({ pageSize: 100 });
         await updateCreativeProject("project/unsafe", { title: "新标题" });
 
-        expect(requests.map((request) => request.input)).toEqual([
-            "/api/creative/projects",
-            "/api/creative/projects?page_size=100",
-            "/api/creative/projects/project%2Funsafe",
-        ]);
+        expect(requests.map((request) => request.input)).toEqual(["/api/creative/projects", "/api/creative/projects?page_size=100", "/api/creative/projects/project%2Funsafe"]);
         expect(JSON.parse(String(requests[0]?.init?.body))).toMatchObject({ title: "短片项目", kind: "general" });
         expect(requests[2]?.init?.method).toBe("PATCH");
     });
@@ -153,12 +158,7 @@ describe("Creative API contracts", () => {
         await createCreativeCanvas({ title: "Storyboard", document: { nodes: [] }, schema_version: 1 });
         await updateCreativeCanvas("canvas/unsafe", { title: "Storyboard v2", document: { nodes: [{ id: "n1" }] }, expected_version: 7 });
 
-        expect(requests.map((request) => request.input)).toEqual([
-            "/api/creative/prompts",
-            "/api/creative/prompts/prompt%2Funsafe/revisions",
-            "/api/creative/canvases",
-            "/api/creative/canvases/canvas%2Funsafe",
-        ]);
+        expect(requests.map((request) => request.input)).toEqual(["/api/creative/prompts", "/api/creative/prompts/prompt%2Funsafe/revisions", "/api/creative/canvases", "/api/creative/canvases/canvas%2Funsafe"]);
         expect(JSON.parse(String(requests[0]?.init?.body))).toMatchObject({ title: "Portrait", variables: [{ name: "subject", required: true }] });
         expect(JSON.parse(String(requests[3]?.init?.body))).toMatchObject({ expected_version: 7, document: { nodes: [{ id: "n1" }] } });
     });

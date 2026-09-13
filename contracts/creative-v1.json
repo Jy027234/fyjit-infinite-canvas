@@ -6,7 +6,7 @@
     "description": "Same-origin authenticated contract for the FYJIT creative workbenches. Provider credentials are never accepted."
   },
   "servers": [{ "url": "/api/creative" }],
-  "x-fyjit-contract-version": "creative-v1-2026-08-15.1",
+  "x-fyjit-contract-version": "creative-v1-2026-09-12.1",
   "x-fyjit-enums": {
     "capability": ["text_generation", "image_generation", "video_generation"],
     "jobStatus": ["CREATED", "QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL_SUCCESS", "MODERATION_REJECTED", "FAILED", "CANCELLED", "EXPIRED"],
@@ -31,7 +31,13 @@
     "/intents": { "post": { "operationId": "createCreativeIntent", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } } },
     "/intents/{intent_id}/consume": { "post": { "operationId": "consumeCreativeIntent", "parameters": [{ "$ref": "#/components/parameters/IntentId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },
     "/jobs": {
-      "get": { "operationId": "listCreativeJobs", "responses": { "200": { "$ref": "#/components/responses/Success" } } },
+      "get": { "operationId": "listCreativeJobs", "parameters": [
+        { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+        { "name": "page_size", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+        { "name": "capability", "in": "query", "schema": { "type": "string" } },
+        { "name": "status", "in": "query", "schema": { "type": "string" } },
+        { "name": "include_assets", "in": "query", "description": "Set to summary to include deduplicated result and reference asset summaries for this page.", "schema": { "type": "string", "enum": ["summary"] } }
+      ], "responses": { "200": { "$ref": "#/components/responses/Success" } } },
       "post": { "operationId": "createCreativeJob", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Success" } } }
     },
     "/jobs/{job_id}": { "get": { "operationId": "getCreativeJob", "parameters": [{ "$ref": "#/components/parameters/JobId" }], "responses": { "200": { "$ref": "#/components/responses/Success" } } } },

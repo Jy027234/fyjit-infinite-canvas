@@ -1,14 +1,15 @@
 import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
-import { useQuery } from "@tanstack/react-query";
 import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
 import { motion } from "motion/react";
 
+import { useCreativeAssetList, useCreativeAssetMutations } from "@/hooks/use-creative-asset-list";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
-import { deleteCreativeAsset, fetchCreativeAssets, fetchCreativePrompts, uploadCreativeAsset, type CreativeAsset, type CreativePrompt } from "@/services/api/creative";
+import { useCreativePromptList } from "@/hooks/use-creative-prompt-list";
+import type { CreativeAsset, CreativePrompt } from "@/services/api/creative";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -294,7 +295,9 @@ function assetContentUrl(assetId: string) {
 function buildInsertPayload(asset: CreativeAsset): InsertAssetPayload {
     const title = asset.title || "未命名素材";
     if (asset.type === "TEXT") return { kind: "text", content: asset.content || "", title, assetId: asset.asset_id };
-    if (asset.type === "VIDEO") return { kind: "video", url: asset.preview_path || assetContentUrl(asset.asset_id), posterUrl: asset.thumbnail_path, title, width: asset.width, height: asset.height, assetId: asset.asset_id };
+    if (asset.type === "VIDEO") return { kind: "video", url: asset.preview_path || assetContentUrl(asset.asset_id), posterUrl: asset.thumbnail_path, title, mimeType: asset.mime_type, width: asset.width, height: asset.height, assetId: asset.asset_id };
+    if (asset.type === "AUDIO")
+        return { kind: "audio", url: asset.preview_path || assetContentUrl(asset.asset_id), title, mimeType: asset.mime_type, durationMs: typeof asset.duration === "number" ? asset.duration * 1000 : undefined, assetId: asset.asset_id };
     return { kind: "image", dataUrl: asset.preview_path || assetContentUrl(asset.asset_id), thumbnailUrl: asset.thumbnail_path, title, assetId: asset.asset_id };
 }
 
@@ -305,12 +308,9 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const query = useQuery({
-        queryKey: ["creative-assets", "canvas-side-panel", keyword],
-        queryFn: () => fetchCreativeAssets({ pageSize: 100, search: keyword.trim() || undefined }),
-        staleTime: 15_000,
-    });
-    const assets = query.data?.items || [];
+    const query = useCreativeAssetList({ pageSize: 100, search: keyword });
+    const { uploadAsset, deleteAsset } = useCreativeAssetMutations();
+    const assets = query.items;
 
     const allTags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))).slice(0, 20), [assets]);
 
@@ -329,12 +329,11 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         try {
             for (const file of files) {
                 if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
-                    await uploadCreativeAsset(file, file.name || (file.type.startsWith("image/") ? "图片" : "视频"));
+                    await uploadAsset.mutateAsync({ file, title: file.name || (file.type.startsWith("image/") ? "图片" : "视频") });
                     added += 1;
                 }
             }
             if (added) {
-                await query.refetch();
                 message.success(`已添加 ${added} 个资产`);
             } else message.warning("仅支持图片或视频文件");
         } catch (error) {
@@ -376,7 +375,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                 </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {query.isLoading ? (
+                {query.isLoading || query.isPlaceholderData ? (
                     <div className="grid min-h-48 place-items-center">
                         <Spin />
                     </div>
@@ -406,8 +405,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                                                     onInsert={() => onInsert(buildInsertPayload(asset))}
                                                     onRemove={async () => {
                                                         try {
-                                                            await deleteCreativeAsset(asset.asset_id);
-                                                            await query.refetch();
+                                                            await deleteAsset.mutateAsync(asset.asset_id);
                                                             message.success("资产已移入回收站");
                                                         } catch (error) {
                                                             message.error(error instanceof Error ? error.message : "资产移除失败");
@@ -475,19 +473,15 @@ function AssetCover({ asset }: { asset: CreativeAsset }) {
 const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const [keyword, setKeyword] = useState("");
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-    const query = useQuery({
-        queryKey: ["creative-prompts", "canvas-side-panel", keyword],
-        queryFn: () => fetchCreativePrompts({ pageSize: 100, search: keyword.trim() || undefined }),
-        staleTime: 15_000,
-    });
+    const query = useCreativePromptList({ pageSize: 100, search: keyword, debounceMs: 250 });
     const groups = useMemo(() => {
         const grouped = new Map<string, CreativePrompt[]>();
-        for (const item of query.data?.items || []) {
+        for (const item of query.items) {
             const category = item.category?.trim() || "未分类";
             grouped.set(category, [...(grouped.get(category) || []), item]);
         }
         return [...grouped.entries()];
-    }, [query.data?.items]);
+    }, [query.items]);
 
     return (
         <div className="flex h-full flex-col">
@@ -495,7 +489,7 @@ const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { o
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索提示词" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-                {query.isLoading ? (
+                {query.isLoading || query.isPlaceholderData ? (
                     <div className="grid min-h-48 place-items-center">
                         <Spin />
                     </div>

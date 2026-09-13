@@ -6,6 +6,7 @@ import { useState } from "react";
 import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
+import { CREATIVE_PROMPT_LIST_QUERY_ROOT } from "@/services/creative-prompt-list";
 import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { canSyncPromptSource, isPromptSourceApproved, isPromptSourceDisabledByServer, type PromptSource } from "@/services/api/prompt-source-presets";
 import { PromptSourceReportModal } from "./prompt-source-report-modal";
@@ -35,6 +36,7 @@ export function ConfigPromptSources() {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["prompts"] }),
             queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
+            queryClient.invalidateQueries({ queryKey: CREATIVE_PROMPT_LIST_QUERY_ROOT }),
             queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY }),
         ]);
     };
@@ -103,21 +105,60 @@ export function ConfigPromptSources() {
                     const takenDown = isPromptSourceDisabledByServer(source.id);
                     return (
                         <div key={source.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
-                            <Switch aria-label={`启用来源 ${source.name}`} size="small" checked={source.enabled && !takenDown} disabled={takenDown} onChange={(checked) => { toggleSource(source.id, checked); void invalidatePrompts(); }} />
+                            <Switch
+                                aria-label={`启用来源 ${source.name}`}
+                                size="small"
+                                checked={source.enabled && !takenDown}
+                                disabled={takenDown}
+                                onChange={(checked) => {
+                                    toggleSource(source.id, checked);
+                                    void invalidatePrompts();
+                                }}
+                            />
                             <div className="min-w-[220px] flex-1">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <span className="truncate text-sm font-semibold">{source.name}</span>
                                     {source.builtIn ? <Tag className="m-0 shrink-0 text-[10px]">内置</Tag> : null}
-                                    {approved ? <Tag color="blue" className="m-0 shrink-0 text-[10px]">完整同步</Tag> : <Tag color="gold" className="m-0 shrink-0 text-[10px]">仅外链</Tag>}
-                                    {takenDown ? <Tag color="error" className="m-0 shrink-0 text-[10px]">站点已下架</Tag> : null}
+                                    {approved ? (
+                                        <Tag color="blue" className="m-0 shrink-0 text-[10px]">
+                                            完整同步
+                                        </Tag>
+                                    ) : (
+                                        <Tag color="gold" className="m-0 shrink-0 text-[10px]">
+                                            仅外链
+                                        </Tag>
+                                    )}
+                                    {takenDown ? (
+                                        <Tag color="error" className="m-0 shrink-0 text-[10px]">
+                                            站点已下架
+                                        </Tag>
+                                    ) : null}
                                 </div>
                                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
                                     <a className="max-w-full truncate hover:text-stone-800 hover:underline dark:hover:text-stone-200" href={source.homepage || source.url} target="_blank" rel="noreferrer">
                                         {source.homepage || source.url}
                                     </a>
-                                    {source.licenseUrl ? <a className="hover:underline" href={source.licenseUrl} target="_blank" rel="noreferrer">{source.licenseId}</a> : <span>{source.licenseId || "许可证未核验"}</span>}
+                                    {source.licenseUrl ? (
+                                        <a className="hover:underline" href={source.licenseUrl} target="_blank" rel="noreferrer">
+                                            {source.licenseId}
+                                        </a>
+                                    ) : (
+                                        <span>{source.licenseId || "许可证未核验"}</span>
+                                    )}
                                     {approved ? <span className="tabular-nums">{status?.count ?? 0} 条</span> : null}
-                                    {approved ? (status?.lastError ? <Tag color="error" className="m-0 text-[10px]" title={status.lastError}>失败</Tag> : status?.lastSuccessAt ? <Tag color="success" className="m-0 text-[10px]">正常</Tag> : <Tag className="m-0 text-[10px]">未同步</Tag>) : null}
+                                    {approved ? (
+                                        status?.lastError ? (
+                                            <Tag color="error" className="m-0 text-[10px]" title={status.lastError}>
+                                                失败
+                                            </Tag>
+                                        ) : status?.lastSuccessAt ? (
+                                            <Tag color="success" className="m-0 text-[10px]">
+                                                正常
+                                            </Tag>
+                                        ) : (
+                                            <Tag className="m-0 text-[10px]">未同步</Tag>
+                                        )
+                                    ) : null}
                                     {approved ? <span>{status?.lastSuccessAt ? `上次成功 ${formatTime(status.lastSuccessAt)}` : "尚未拉取"}</span> : <span>不下载正文或预览</span>}
                                 </div>
                             </div>
@@ -128,9 +169,19 @@ export function ConfigPromptSources() {
                                 <Button size="small" icon={<RefreshCw className="size-3.5" />} disabled={!canSync} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
                                     立即拉取
                                 </Button>
-                                {!source.builtIn ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingSource(source)}>编辑来源</Button> : null}
-                                {!source.builtIn ? <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => handleDelete(source)}>删除</Button> : null}
-                                <Button size="small" danger icon={<Flag className="size-3.5" />} onClick={() => setReportingSource(source)}>举报来源</Button>
+                                {!source.builtIn ? (
+                                    <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingSource(source)}>
+                                        编辑来源
+                                    </Button>
+                                ) : null}
+                                {!source.builtIn ? (
+                                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => handleDelete(source)}>
+                                        删除
+                                    </Button>
+                                ) : null}
+                                <Button size="small" danger icon={<Flag className="size-3.5" />} onClick={() => setReportingSource(source)}>
+                                    举报来源
+                                </Button>
                             </div>
                         </div>
                     );

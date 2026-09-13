@@ -17,6 +17,7 @@
         "contract:generate": "node scripts/generate-creative-contract.mjs",
         "contract:check": "node scripts/generate-creative-contract.mjs --check",
         "boundary:check": "node scripts/check-fyjit-boundary.mjs",
+        "theme:check": "node scripts/check-fyjit-theme.mjs",
         "licenses:generate": "node scripts/generate-third-party-notices.mjs",
         "licenses:check": "node scripts/generate-third-party-notices.mjs --check"
     },
