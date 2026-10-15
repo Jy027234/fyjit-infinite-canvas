@@ -232,7 +232,7 @@ export default function VideoPage() {
 
     const videoModels = fyjitModels.filter((item) => item.capabilities.includes("video_generation"));
     const preferredModel = effectiveConfig.videoModel || effectiveConfig.model;
-    const model = videoModels.some((item) => item.id === preferredModel) ? preferredModel : videoModels[0]?.id || "";
+    const model = preferredModel || videoModels[0]?.id || "";
     const hasVideoModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("video_generation"));
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.video_generation;
     const maxImageReferences = modelProfile?.max_reference_images ?? 0;

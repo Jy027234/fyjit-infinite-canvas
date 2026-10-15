@@ -1,9 +1,12 @@
 import type { NavigateFunction } from "react-router-dom";
 
+import i18n from "@/i18n";
+
 import { createCreativeTextAsset, fetchCreativeAssets, fetchCreativePrompts, updateCreativeAsset, uploadCreativeAsset } from "@/services/api/creative";
-import { imageAspectOptions, imageQualityOptions } from "@/components/image-settings-panel";
-import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
+import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
+import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { clampVideoSeconds } from "@/lib/media-size";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -28,16 +31,20 @@ export function isSiteTool(name: string): name is SiteToolName {
     return (SITE_TOOL_NAMES as readonly string[]).includes(name);
 }
 
+function siteText(key: string, options?: Record<string, unknown>) {
+    return i18n.t(`agent.siteTools.${key}`, options);
+}
+
 export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
-    canvas_list_projects: "画布列表",
-    generation_get_status: "生成任务状态",
-    workbench_image_get_config: "生图配置",
-    workbench_image_generate: "生图工作台生成",
-    workbench_video_get_config: "视频配置",
-    workbench_video_generate: "视频创作台生成",
-    prompts_search: "搜索提示词",
-    assets_list: "资产列表",
-    assets_add: "添加资产",
+    get canvas_list_projects() { return siteText("canvasList"); },
+    get generation_get_status() { return siteText("generationStatus"); },
+    get workbench_image_get_config() { return siteText("imageConfig"); },
+    get workbench_image_generate() { return siteText("imageGenerate"); },
+    get workbench_video_get_config() { return siteText("videoConfig"); },
+    get workbench_video_generate() { return siteText("videoGenerate"); },
+    get prompts_search() { return siteText("promptSearch"); },
+    get assets_list() { return siteText("assetList"); },
+    get assets_add() { return siteText("assetAdd"); },
 };
 
 type SiteToolInput = Record<string, unknown>;
@@ -66,7 +73,7 @@ export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navi
         case "assets_add":
             return addAsset(input);
         default:
-            throw new Error(`未知工具：${name}`);
+            throw new Error(siteText("unknownTool", { name }));
     }
 }
 
@@ -122,7 +129,7 @@ function compactPrompt(prompt: unknown) {
 
 function listCanvasProjects(input: SiteToolInput) {
     const { projects, hydrated } = useCanvasStore.getState();
-    if (!hydrated) throw new Error("画布还在加载中，请稍后重试");
+    if (!hydrated) throw new Error(siteText("canvasLoading"));
     const keyword = String(input.keyword || "").trim().toLowerCase();
     const filtered = keyword ? projects.filter((project) => project.title.toLowerCase().includes(keyword)) : projects;
     const { page, pageSize, start, end } = paginate(input, filtered.length, 20);
@@ -134,7 +141,7 @@ function listCanvasProjects(input: SiteToolInput) {
         nodeCount: project.nodes.length,
         connectionCount: project.connections.length,
     }));
-    return { total: filtered.length, page, pageSize, items, hint: "用 site_navigate 跳转 /canvas/{id} 打开对应画布" };
+    return { total: filtered.length, page, pageSize, items, hint: siteText("canvasHint") };
 }
 
 function getImageConfig() {
@@ -144,6 +151,7 @@ function getImageConfig() {
         current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
         qualityOptions: imageQualityOptions,
+        scaleOptions: imageScaleOptions,
         sizeOptions: imageAspectOptions,
         countRange: { min: 1, max: 15 },
     };
@@ -175,7 +183,7 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const run = input.run !== false;
     navigate("/image");
     const taskId = useWorkbenchAgentStore.getState().dispatchImage({ prompt, run });
-    return { ok: true, navigated: "/image", prompt, run, taskId, applied, note: run ? "已跳转生图工作台并触发生成，可用 generation_get_status 查询任务" : "已跳转生图工作台并填入参数，未触发生成" };
+    return { ok: true, navigated: "/image", prompt, run, taskId, applied, note: siteText(run ? "imageGenerationStarted" : "imageConfigApplied") };
 }
 
 function getVideoConfig() {
@@ -193,7 +201,7 @@ function getVideoConfig() {
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
         sizeOptions: videoSizeOptions,
-        secondsOptions: videoSecondOptions,
+        secondsRange: videoSecondsRange,
         resolutionOptions: videoResolutionOptions,
     };
 }
@@ -211,9 +219,10 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         configStore.updateConfig("size", input.size);
         applied.size = input.size;
     }
-    if (typeof input.seconds === "string" && input.seconds.trim()) {
-        configStore.updateConfig("videoSeconds", input.seconds);
-        applied.seconds = input.seconds;
+    if (input.seconds != null && String(input.seconds).trim()) {
+        const seconds = clampVideoSeconds(String(input.seconds));
+        configStore.updateConfig("videoSeconds", seconds);
+        applied.seconds = seconds;
     }
     if (typeof input.resolution === "string" && input.resolution.trim()) {
         configStore.updateConfig("vquality", input.resolution);
@@ -231,7 +240,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const run = input.run !== false;
     navigate("/video");
     const taskId = useWorkbenchAgentStore.getState().dispatchVideo({ prompt, run });
-    return { ok: true, navigated: "/video", prompt, run, taskId, applied, note: run ? "已跳转视频创作台并触发生成，可用 generation_get_status 查询任务" : "已跳转视频创作台并填入参数，未触发生成" };
+    return { ok: true, navigated: "/video", prompt, run, taskId, applied, note: siteText(run ? "videoGenerationStarted" : "videoConfigApplied") };
 }
 
 async function searchPrompts(input: SiteToolInput) {
@@ -275,7 +284,7 @@ async function listAssets(input: SiteToolInput) {
 async function addAsset(input: SiteToolInput) {
     const kind = input.kind;
     const title = String(input.title || "").trim();
-    if (!title) throw new Error("请提供资产标题 title");
+    if (!title) throw new Error(siteText("assetTitleRequired"));
     const tags = Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === "string") : [];
     const note = typeof input.note === "string" ? input.note : undefined;
     if (kind === "text") {
@@ -292,13 +301,13 @@ async function addAsset(input: SiteToolInput) {
             response = await fetch(imageUrl, { credentials: "include" });
             if (!response.ok) throw new Error("image fetch failed");
         } catch {
-            throw new Error("无法读取该图片地址，请改用 dataURL 或可跨域访问的图片链接");
+            throw new Error(siteText("imageReadFailed"));
         }
         const asset = await uploadCreativeAsset(await response.blob(), title);
         if (tags.length || note) await updateCreativeAsset(asset.asset_id, { tags, notes: note });
         return { ok: true, id: asset.asset_id, kind: "image" };
     }
-    throw new Error("assets_add 仅支持 kind=text 或 kind=image");
+    throw new Error(siteText("assetKindUnsupported"));
 }
 
 function paginate(input: SiteToolInput, total: number, defaultSize: number) {

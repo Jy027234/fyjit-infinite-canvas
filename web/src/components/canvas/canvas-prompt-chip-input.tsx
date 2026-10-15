@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { Image } from "antd";
 import { AtSign, FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
+import i18n from "@/i18n";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -34,8 +35,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
-    // 记录我们最近一次向父级 emit 的 value。聚焦时若 value 与它一致,说明是本组件输入的回声,
-    // 跳过重建以免打断光标 / IME;若不一致(如发送后父级把 prompt 清空、或从提示词库插入),即使聚焦也要重建。
+    // Track the last value emitted to the parent. An identical focused value is this component's own echo,
+    // so skip rebuilding to preserve the caret and IME. Rebuild external changes even while focused.
     const lastEmittedRef = useRef(value);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
@@ -53,7 +54,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         return activeReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
     }, [mention, activeReferences]);
 
-    // DOM ← value:未聚焦时按 value 重建;聚焦时仅当 value 是外部改动(非本组件回声)才重建。
+    // Rebuild the DOM from value when unfocused, or when a focused value is an external change rather than an emitted echo.
     useEffect(() => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -218,7 +219,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
             {mention && candidates.length ? (
                 <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} />
             ) : null}
-            {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
+            {imagePreview ? <Image src={imagePreview} alt={i18n.t("canvas.composer.imagePreview")} style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
 }
@@ -263,7 +264,7 @@ function MentionMenu({ rect, references, activeIndex, theme, onSelect }: { rect:
     return createPortal(
         <div
             data-canvas-resource-mention-menu="true"
-            className="fixed z-[120] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-md"
+            className="fixed z-[1100] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-md"
             style={{ left, top, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={stopCanvasInteraction}
             onMouseDown={stopCanvasInteraction}
@@ -369,7 +370,7 @@ function removeActiveMention() {
     range.deleteContents();
 }
 
-// chip 是 contentEditable="false" 的原子块,光标紧邻它按 Backspace/Delete 时整块删除。
+// Chips are atomic contentEditable="false" blocks and are removed as a unit with adjacent Backspace/Delete presses.
 function deleteAdjacentReference(key: string) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !selection.isCollapsed) return false;
@@ -421,7 +422,7 @@ function caretRect(): DOMRect | null {
     range.collapse(true);
     const rect = range.getBoundingClientRect();
     if (rect.width || rect.height || rect.left || rect.top) return rect;
-    // 空行/空编辑器时 range 无尺寸,退回到编辑器盒子。
+    // Empty lines and editors produce a zero-sized range, so fall back to the editor bounds.
     const editor = closestEditor(range.startContainer);
     return editor ? editor.getBoundingClientRect() : null;
 }

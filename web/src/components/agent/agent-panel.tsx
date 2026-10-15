@@ -1,6 +1,9 @@
 import { lazy, Suspense, useEffect, useState, type ComponentType, type PointerEvent as ReactPointerEvent } from "react";
 import { motion } from "motion/react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+
+import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
@@ -40,8 +43,10 @@ function AgentPanelFallback({ theme }: { theme: (typeof canvasThemes)[keyof type
 }
 
 export function AgentPanel() {
+    const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [searchParams] = useSearchParams();
+    const { hash } = useLocation();
     const width = useAgentStore((state) => state.width);
     const [resizing, setResizing] = useState(false);
     const panelMounted = useAgentStore((state) => state.panelMounted);
@@ -69,7 +74,7 @@ export function AgentPanel() {
     };
 
     // Canvas Agent URL 启动路径可能保持面板收起，但仍需要挂载连接逻辑来完成自动连接。
-    const autoConnectRequested = searchParams.has("agentUrl") && searchParams.has("agentToken");
+    const autoConnectRequested = (searchParams.has("agentUrl") && searchParams.has("agentToken")) || hasAgentUrlBootstrap(hash);
     useEffect(() => {
         if (autoConnectRequested && !panelMounted) setAgentState({ panelMounted: true });
     }, [autoConnectRequested, panelMounted, setAgentState]);
@@ -91,7 +96,7 @@ export function AgentPanel() {
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
-                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label="调整右侧面板宽度" />
+                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("agent.panel.resize")} />
                 <Suspense fallback={<AgentPanelFallback theme={theme} />}>
                     <DeferredLocalAgentPanel embedded />
                 </Suspense>

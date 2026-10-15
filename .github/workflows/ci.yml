@@ -75,7 +75,9 @@ jobs:
           test -s THIRD_PARTY_NOTICES.md
           grep -q "THIRD_PARTY_NOTICES.md" NOTICE
           grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" LICENSE
-          grep -q "335467ec0d98aca69df49c285edd56eb00e736e6" UPSTREAM.md
+          grep -q "3a6b64b602ad062b29fac66902ed18a7ef5fd9dc" UPSTREAM.md
+          test -s LICENSE.upstream-MIT
+          grep -q "MIT License" LICENSE.upstream-MIT
           grep -q "not granted under the software" NOTICE
           grep -q "PUBLIC_SOURCE_URL" web/src/components/layout/version-release-modal.tsx
           grep -q "THIRD_PARTY_NOTICES.md" web/src/components/layout/version-release-modal.tsx

@@ -13,6 +13,8 @@ const forbiddenFiles = [
     "src/services/app-sync.ts",
     "src/services/config-file.ts",
     "src/services/webdav-sync.ts",
+    "src/components/layout/config-local-proxy.tsx",
+    "src/services/api/local-proxy.ts",
 ];
 const forbiddenPatterns = [
     /\bapiKey\b/i,
@@ -20,6 +22,7 @@ const forbiddenPatterns = [
     /api\.openai\.com/i,
     /generativelanguage\.googleapis\.com/i,
     /x-goog-api-key/i,
+    /\bwithLocalProxy\b/,
     /请先配置\s*(?:API Key|Base URL)/i,
 ];
 

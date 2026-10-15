@@ -561,12 +561,14 @@ OS/architecture-specific optional packages are normalized to their parent projec
 | highlight.js | 10.7.3 | BSD-3-Clause | [source](https://github.com/highlightjs/highlight.js) |
 | highlightjs-vue | 1.0.0 | CC0-1.0 | [source](https://github.com/highlightjs/highlightjs-vue) |
 | hono | 4.12.18 | MIT | [source](https://github.com/honojs/hono) |
+| html-parse-stringify | 4.0.1 | MIT | [source](https://github.com/i18next/html-parse-stringify) |
 | html-url-attributes | 3.0.1 | MIT | [source](https://github.com/rehypejs/rehype-minify/tree/main/packages/html-url-attributes) |
 | html-void-elements | 3.0.0 | MIT | [source](wooorm/html-void-elements) |
 | http-errors | 2.0.1 | MIT | [source](jshttp/http-errors) |
 | https-proxy-agent | 7.0.6 | MIT | [source](https://github.com/TooTallNate/proxy-agents) |
 | human-signals | 2.1.0 | Apache-2.0 | [source](ehmicky/human-signals) |
 | human-signals | 8.0.1 | Apache-2.0 | [source](https://github.com/ehmicky/human-signals) |
+| i18next | 26.3.6 | MIT | [source](https://github.com/i18next/i18next) |
 | iconv-lite | 0.6.3 | MIT | [source](https://github.com/ashtuchkin/iconv-lite) |
 | iconv-lite | 0.7.2 | MIT | [source](https://github.com/pillarjs/iconv-lite) |
 | ignore | 5.3.2 | MIT | [source](https://github.com/kaelzhang/node-ignore) |
@@ -805,6 +807,7 @@ OS/architecture-specific optional packages are normalized to their parent projec
 | react | 19.2.5 | MIT | [source](https://github.com/facebook/react) |
 | react-dom | 19.2.5 | MIT | [source](https://github.com/facebook/react) |
 | react-draggable | 4.5.0 | MIT | [source](https://github.com/react-grid-layout/react-draggable) |
+| react-i18next | 17.0.11 | MIT | [source](https://github.com/i18next/react-i18next) |
 | react-is | 16.13.1 | MIT | [source](https://github.com/facebook/react) |
 | react-is | 18.3.1 | MIT | [source](https://github.com/facebook/react) |
 | react-layout-kit | 1.9.2 | MIT | [source](https://github.com/arvinxx/react-layout-kit) |

@@ -10,6 +10,15 @@ import ruRU from "antd/locale/ru_RU";
 import viVN from "antd/locale/vi_VN";
 import zhCN from "antd/locale/zh_CN";
 import zhTW from "antd/locale/zh_TW";
+import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
+import "dayjs/locale/zh-tw";
+import "dayjs/locale/fr";
+import "dayjs/locale/ja";
+import "dayjs/locale/ru";
+import "dayjs/locale/vi";
+
+import { syncAppLocale } from "@/i18n";
 
 import { ClientRootInit } from "@/components/layout/client-root-init";
 import { getAntThemeConfig } from "@/lib/app-theme";
@@ -38,6 +47,12 @@ export function AppProviders({ children }: { children: ReactNode }) {
         document.documentElement.classList.add(theme);
         document.documentElement.style.colorScheme = theme;
     }, [dark, theme]);
+
+    useEffect(() => {
+        void syncAppLocale(language);
+        document.documentElement.lang = { en: "en", zhCN: "zh-CN", zhTW: "zh-TW", fr: "fr", ru: "ru", ja: "ja", vi: "vi" }[language];
+        dayjs.locale({ en: "en", zhCN: "zh-cn", zhTW: "zh-tw", fr: "fr", ru: "ru", ja: "ja", vi: "vi" }[language]);
+    }, [language]);
 
     useEffect(() => {
         const sync = () => syncMainTheme();

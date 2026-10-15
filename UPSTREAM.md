@@ -3,9 +3,15 @@
 ## Fixed baseline
 
 - Repository: `https://github.com/basketikun/infinite-canvas.git`
-- Release: `v0.13.0`
-- Commit: `335467ec0d98aca69df49c285edd56eb00e736e6`
-- License: `AGPL-3.0`
+- Release: `v0.20.0`
+- Commit: `3a6b64b602ad062b29fac66902ed18a7ef5fd9dc`
+- Upstream license: `MIT` (retained in `LICENSE.upstream-MIT`).
+- FYJIT derivative license: `AGPL-3.0` (retained in `LICENSE`).
+
+The original FYJIT fork started from AGPL-3.0 upstream `v0.13.0` /
+`335467ec0d98aca69df49c285edd56eb00e736e6`. The upgrade preserves that
+history and the FYJIT patches; the upstream license change does not relicense
+the existing FYJIT derivative.
 
 The local Git remote named `upstream` points to the repository above. The public FYJIT derivative is published at `https://github.com/Jy027234/fyjit-infinite-canvas` through the `origin` remote.
 
@@ -36,4 +42,28 @@ The replacement boundary is the same-origin FYJIT Creative API under `/api/creat
 - FYJIT session and Creative API replace browser-managed provider credentials.
 - FYJIT navigation, theme, version, and source metadata replace upstream standalone configuration entry points.
 
-No upstream sync has been attempted after the fixed baseline yet.
+## v0.20.0 integration
+
+Merged the official tag without squashing upstream history. Canvas rendering,
+multi-result nodes, reference connections, focus controls, previews, Agent
+conversation handling, and upstream localization follow v0.20.0.
+
+Conflict decisions:
+
+- Keep FYJIT bootstrap, shared session/preferences, sign-out, navigation, and
+  source metadata instead of upstream credential setup and root-path links.
+- Keep Creative estimates/jobs, authorized asset routes, server pagination and
+  trash, canvas optimistic locking, revisions, and save-before-navigation.
+- Persist each grouped image/text result's FYJIT asset ID. Resume video nodes
+  with the existing Creative job ID, never a direct provider task or a new job.
+- Keep capability-driven FYJIT video controls. Upstream provider-specific
+  request parameters remain subject to server-declared supported parameters.
+- Exclude browser local-proxy/provider configuration and WebDAV modules. The
+  upstream standalone canvas-proxy package is retained as upstream source only
+  and is not imported, built, or deployed by the FYJIT web application.
+- Retain FYJIT workbench/history/draft/asset/prompt pages where upstream assumes
+  browser-owned generation history; retain prompt licensing/takedown policy.
+- Retain both upstream MIT attribution and the existing AGPL derivative license.
+
+Validation results are recorded in `docs/fyjit-v0.20.0-upgrade.md`. Production
+image selection remains a separate immutable release/deployment step.

@@ -4,9 +4,10 @@ export type PromptReference = {
     label: string;
     title?: string;
 };
+import i18n from "@/i18n";
 
 export function imageReferenceLabel(index: number) {
-    return `图片${index + 1}`;
+    return i18n.t("imageReferences.label", { index: index + 1 });
 }
 
 export function buildImageReferencePromptText(prompt: string, references: ReferenceImage[]) {

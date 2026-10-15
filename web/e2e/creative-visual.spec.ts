@@ -1351,6 +1351,100 @@ for (const failure of [
     });
 }
 
+test("v0.20 preserves an unavailable explicit model without submitting a replacement", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    await page.addInitScript(() => localStorage.setItem("fyjit-creative:preferences", JSON.stringify({ state: { config: { model: "removed-image", imageModel: "removed-image" } }, version: 0 })));
+    let submitted = 0;
+    await page.route("**/api/creative/jobs", (route) => {
+        if (route.request().method() === "POST") submitted += 1;
+        return route.fallback();
+    });
+    await page.goto("/creative/image");
+    await page.getByPlaceholder(/描述画面主体、风格/).fill("明确选择的模型不可用时不要替换");
+    await expect(page.getByText("removed-image", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "开始生成", exact: true })).toBeDisabled();
+    expect(submitted).toBe(0);
+});
+
+test("v0.20 resumes and cancels the existing canvas video job without a second submission", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    await page.route("**/api/creative/models", (route) => {
+        const models = creativeFixture("/models") as Array<{ id: string; capability_profiles: { video_generation?: { input_modes: string[] } } }>;
+        models.find((model) => model.id === "fyjit-visual-video")!.capability_profiles.video_generation!.input_modes = ["text_to_video"];
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ success: true, data: models }) });
+    });
+    const node = { id: "resume-video", type: "video", title: "恢复中的视频", position: { x: 400, y: 250 }, width: 320, height: 180, metadata: { model: "fyjit-visual-video", prompt: "保持原任务", status: "loading", creativeJobId: "job-resume" } };
+    await mockUpgradeCanvas(page, "resume-canvas", [node]);
+    let polled = 0;
+    let submitted = 0;
+    let cancelled = 0;
+    await page.route("**/api/creative/jobs**", (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (path === "/api/creative/jobs" && route.request().method() === "POST") submitted += 1;
+        if (path === "/api/creative/jobs/job-resume/cancel") cancelled += 1;
+        if (path === "/api/creative/jobs/job-resume") polled += 1;
+        if (path.startsWith("/api/creative/jobs/job-resume")) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ success: true, data: creativeVideoJobFixture("resume", cancelled ? "CANCELLED" : "QUEUED", "保持原任务") }) });
+        if (path === "/api/creative/jobs/job-fresh" || (path === "/api/creative/jobs" && route.request().method() === "POST")) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ success: true, data: creativeVideoJobFixture("fresh", "QUEUED", "保持原任务") }) });
+        return route.fallback();
+    });
+    await page.goto("/creative/canvas/resume-canvas");
+    await expect.poll(() => polled).toBeGreaterThan(0);
+    await page.locator('[data-node-id="resume-video"]').click();
+    await expect(page.locator('[data-node-panel="resume-video"]')).toBeVisible();
+    const stop = page.getByRole("button", { name: "停止生成", exact: true });
+    await expect(stop).toBeVisible();
+    await stop.click();
+    const confirm = page.getByRole("dialog", { name: "停止生成" });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: /^停\s*止$/ }).click();
+    await expect.poll(() => cancelled).toBe(1);
+    expect(submitted).toBe(0);
+    await page.getByRole("button", { name: "生成", exact: true }).click();
+    await expect.poll(() => submitted).toBe(1);
+});
+
+test("v0.20 preserves old batch asset identities and connected children when saving a version", async ({ page }) => {
+    await prepareCreativePage(page, viewports[3]);
+    const root = { id: "legacy-root", type: "image", title: "历史图片组", position: { x: 400, y: 200 }, width: 320, height: 240, metadata: { isBatchRoot: true, batchChildIds: ["legacy-child"], content: "/api/creative/assets/legacy-b/content", assetId: "legacy-b", primaryImageId: "legacy-child", status: "success" } };
+    const child = { id: "legacy-child", type: "image", title: "历史子图", position: { x: 760, y: 200 }, width: 320, height: 240, metadata: { batchRootId: "legacy-root", content: "/api/creative/assets/legacy-b/content", assetId: "legacy-b", status: "success" } };
+    const target = { id: "legacy-target", type: "text", title: "引用目标", position: { x: 400, y: 520 }, width: 240, height: 120, metadata: { content: "保留外部连线" } };
+    const saves = await mockUpgradeCanvas(page, "legacy-canvas", [root, child, target], [{ id: "external-reference", fromNodeId: "legacy-child", toNodeId: "legacy-target" }]);
+    await page.goto("/creative/canvas/legacy-canvas");
+    await expect(page.locator('[data-node-id="legacy-root"]')).toBeVisible();
+    await page.getByRole("button", { name: "画布外观", exact: true }).click();
+    await page.getByRole("switch", { name: "原地重新生成（覆盖当前节点）" }).click();
+    await page.getByRole("switch", { name: "选中自动居中" }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "画布外观", exact: true }).click();
+    await expect(page.getByRole("switch", { name: "原地重新生成（覆盖当前节点）" })).toBeChecked();
+    await expect(page.getByRole("switch", { name: "选中自动居中" })).toBeChecked();
+    await page.getByRole("button", { name: "画布外观", exact: true }).click();
+    await page.getByRole("button", { name: "打开画布菜单" }).click();
+    await clickVisibleCanvasMenuItem(page, "创建版本快照");
+    await expect.poll(() => saves.length).toBeGreaterThan(0);
+    const document = saves.at(-1)?.document as { nodes: Array<{ id: string; metadata?: { assetId?: string; images?: Array<{ assetId?: string }> } }>; connections: Array<{ id: string }> };
+    expect(document.nodes.find((item) => item.id === "legacy-root")?.metadata?.images?.some((item) => item.assetId === "legacy-b")).toBe(true);
+    expect(document.nodes.some((item) => item.id === "legacy-child")).toBe(true);
+    expect(document.connections.some((item) => item.id === "external-reference")).toBe(true);
+});
+
+async function mockUpgradeCanvas(page: Page, id: string, nodes: unknown[], connections: unknown[] = []) {
+    const document = { nodes, connections, chatSessions: [], activeChatId: null, backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } };
+    const project = { project_id: id, user_id: 1001, title: "升级回归画布", document, version: 1, schema_version: 2, created_at: 1785700000, updated_at: 1785700000 };
+    const saves: Array<Record<string, unknown>> = [];
+    await page.route("**/api/creative/canvases**", (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (route.request().method() === "GET" && path.endsWith("/canvases")) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ success: true, data: { items: [project], total: 1, page: 1, page_size: 100 } }) });
+        if (route.request().method() === "PUT") {
+            const input = route.request().postDataJSON() as Record<string, unknown>;
+            saves.push(input);
+            return route.fulfill({ contentType: "application/json", body: JSON.stringify({ success: true, data: { ...project, ...input, version: 2 } }) });
+        }
+        return route.fallback();
+    });
+    return saves;
+}
+
 async function prepareCreativePage(page: Page, viewport: { width: number; height: number }, overrides: { models?: unknown[]; tokens?: unknown[]; disabledFeature?: string } = {}) {
     await page.setViewportSize(viewport);
     await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });

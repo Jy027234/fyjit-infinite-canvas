@@ -2,12 +2,13 @@ import { App, Button, Select, Switch, Tag } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Flag, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
 import { CREATIVE_PROMPT_LIST_QUERY_ROOT } from "@/services/creative-prompt-list";
-import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import { PROMPT_SOURCE_INTERVALS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { canSyncPromptSource, isPromptSourceApproved, isPromptSourceDisabledByServer, type PromptSource } from "@/services/api/prompt-source-presets";
 import { PromptSourceReportModal } from "./prompt-source-report-modal";
 
@@ -15,6 +16,7 @@ const STATUS_QUERY_KEY = ["prompt-source-statuses"];
 
 export function ConfigPromptSources() {
     const { message, modal } = App.useApp();
+    const { i18n, t } = useTranslation();
     const queryClient = useQueryClient();
     const sources = usePromptSourceStore((state) => state.sources);
     const schedule = usePromptSourceStore((state) => state.schedule);
@@ -31,6 +33,7 @@ export function ConfigPromptSources() {
     const [refreshingAll, setRefreshingAll] = useState(false);
     const [reportingSource, setReportingSource] = useState<PromptSource | null>(null);
     const viewingSource = sources.find((item) => item.id === viewingId) || null;
+    const intervalOptions = PROMPT_SOURCE_INTERVALS.map((value) => ({ value, label: t(`config.promptSources.intervals.${intervalKey(value)}`) }));
 
     const invalidatePrompts = async () => {
         await Promise.all([
@@ -48,11 +51,11 @@ export function ConfigPromptSources() {
 
     const handleDelete = (source: PromptSource) => {
         modal.confirm({
-            title: `删除「${source.name}」？`,
-            content: "来源配置会被移除，已经加入我的资产的内容不受影响。",
-            okText: "删除",
+            title: t("config.promptSources.deleteTitle", { name: source.name }),
+            content: t("config.promptSources.deleteDescription"),
+            okText: t("common.delete"),
             okButtonProps: { danger: true },
-            cancelText: "取消",
+            cancelText: t("common.cancel"),
             onOk: async () => {
                 removeSource(source.id);
                 await invalidatePrompts();
@@ -65,10 +68,10 @@ export function ConfigPromptSources() {
         try {
             const result = await refreshSource(source.id);
             await invalidatePrompts();
-            message.success(`「${source.name}」已更新 ${result.count} 条`);
+            message.success(t("config.promptSources.refreshed", { name: source.name, count: result.count }));
         } catch (error) {
             await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
-            message.error(error instanceof Error ? error.message : "更新失败，已保留旧缓存");
+            message.error(error instanceof Error ? error.message : t("config.promptSources.refreshFailedCached"));
         } finally {
             setRefreshingId("");
         }
@@ -80,10 +83,10 @@ export function ConfigPromptSources() {
             const result = await refreshAllSources();
             updateSchedule("lastFetchedAt", new Date().toISOString());
             await invalidatePrompts();
-            if (result.failureCount) message.warning(`更新完成：${result.successCount} 个成功，${result.failureCount} 个失败，失败来源已保留旧缓存`);
-            else message.success(`已更新 ${result.successCount} 个来源，共 ${result.total} 条`);
+            if (result.failureCount) message.warning(t("config.promptSources.refreshPartial", { success: result.successCount, failed: result.failureCount }));
+            else message.success(t("config.promptSources.refreshAllSuccess", { sources: result.successCount, total: result.total }));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "更新失败");
+            message.error(error instanceof Error ? error.message : t("config.promptSources.refreshFailed"));
         } finally {
             setRefreshingAll(false);
         }
@@ -93,7 +96,7 @@ export function ConfigPromptSources() {
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
                 <Button type="primary" icon={<Plus className="size-4" />} onClick={() => setEditingSource(addSource())}>
-                    新增来源
+                    {t("config.promptSources.add")}
                 </Button>
             </div>
 
@@ -189,16 +192,16 @@ export function ConfigPromptSources() {
             </div>
 
             <section className="mt-5 rounded-lg border border-stone-200 p-4 dark:border-stone-800">
-                <div className="mb-3 text-sm font-semibold">定时拉取</div>
+                <div className="mb-3 text-sm font-semibold">{t("config.promptSources.schedule")}</div>
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-stone-500">拉取周期</span>
-                        <Select size="small" className="w-36" value={schedule.intervalMinutes} options={PROMPT_SOURCE_INTERVAL_OPTIONS} onChange={(value) => updateSchedule("intervalMinutes", value)} />
+                        <span className="text-xs text-stone-500">{t("config.promptSources.interval")}</span>
+                        <Select size="small" className="w-36" value={schedule.intervalMinutes} options={intervalOptions} onChange={(value) => updateSchedule("intervalMinutes", value)} />
                     </div>
                     <Button size="small" type="primary" icon={<RefreshCw className="size-3.5" />} loading={refreshingAll} onClick={() => void handleRefreshAll()}>
-                        全部立即拉取
+                        {t("config.promptSources.refreshAll")}
                     </Button>
-                    <span className="text-xs text-stone-500">{schedule.lastFetchedAt ? `上次拉取 ${formatTime(schedule.lastFetchedAt)}` : "尚未定时拉取"}</span>
+                    <span className="text-xs text-stone-500">{schedule.lastFetchedAt ? t("config.promptSources.lastFetched", { time: formatTime(schedule.lastFetchedAt, i18n.resolvedLanguage) }) : t("config.promptSources.neverScheduled")}</span>
                 </div>
                 <div className="mt-2 text-xs text-stone-400">开启周期后，页面打开期间只会拉取已启用且授权审计通过的来源；仅外链来源不会下载或缓存内容。</div>
             </section>
@@ -210,7 +213,15 @@ export function ConfigPromptSources() {
     );
 }
 
-function formatTime(value: string) {
+function formatTime(value: string, locale?: string) {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function intervalKey(value: number) {
+    if (value === 30) return "minutes30";
+    if (value === 60) return "hour1";
+    if (value === 360) return "hours6";
+    if (value === 1440) return "hours24";
+    return "disabled";
 }

@@ -1,10 +1,12 @@
 import { Button, Modal } from "antd";
+import { useTranslation } from "react-i18next";
 
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 
 export function CanvasDeleteProjectsDialog({ onDeleted }: { onDeleted?: (count: number) => void }) {
+    const { t } = useTranslation();
     const ids = useCanvasUiStore((state) => state.deleteProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
     const removeSelectedIds = useCanvasUiStore((state) => state.removeSelectedProjectIds);
@@ -21,15 +23,15 @@ export function CanvasDeleteProjectsDialog({ onDeleted }: { onDeleted?: (count: 
 
     return (
         <Modal
-            title="删除画布？"
+            title={t("canvas.project.deleteTitle")}
             open={ids.length > 0}
             centered
             onCancel={() => setDeleteIds([])}
             footer={
                 <>
-                    <Button onClick={() => setDeleteIds([])}>取消</Button>
+                    <Button onClick={() => setDeleteIds([])}>{t("common.cancel")}</Button>
                     <Button danger type="primary" onClick={confirm}>
-                        删除
+                        {t("common.delete")}
                     </Button>
                 </>
             }

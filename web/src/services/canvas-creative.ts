@@ -9,6 +9,17 @@ type RequestOptions = { signal?: AbortSignal; onAssetId?: (assetId: string) => v
 type CreativeImageResult = { id: string; dataUrl: string };
 type CreativeVideoResult = { assetId?: string; url?: string; mimeType?: string; width?: number; height?: number; bytes?: number; durationMs?: number };
 type CreativeUploadedMedia = { assetId?: string; url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+export class CreativeVideoJobTerminalError extends Error {
+    constructor(public readonly jobId: string, message: string) {
+        super(message);
+        this.name = "CreativeVideoJobTerminalError";
+    }
+}
+
+export function creativeVideoJobIdAfterError(jobId: string | undefined, error: unknown) {
+    return error instanceof CreativeVideoJobTerminalError && error.jobId === jobId ? undefined : jobId;
+}
+
 export type AiTextMessage = { role: "system" | "user" | "assistant"; content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> };
 
 export async function requestCreativeGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<CreativeImageResult[]> {
@@ -58,7 +69,7 @@ export async function requestCreativeVideoGeneration(
     const job = await createCreativeJob({ capability: "video_generation", model, group: "auto", token: { strategy: "auto" }, prompt, parameters: estimate.normalized_parameters, reference_asset_ids: referenceAssetIds, idempotency_key: randomId() }, options?.signal);
     options?.onJobId?.(job.job_id);
     const completed = await waitForCreativeJob(job.job_id, { signal: options?.signal, intervalMs: 2500 });
-    if (completed.status !== "SUCCEEDED") throw new Error(completed.error || "画布视频任务失败");
+    if (completed.status !== "SUCCEEDED") throw new CreativeVideoJobTerminalError(job.job_id, completed.error || "画布视频任务失败");
     const assetId = completed.result_asset_ids[0];
     if (!assetId) throw new Error("画布视频任务没有返回素材");
     const asset = await fetchCreativeAsset(assetId, options?.signal);

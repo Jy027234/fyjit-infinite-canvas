@@ -1,9 +1,12 @@
 # FYJIT patch register
 
-All patches in this repository are applied on top of upstream release `v0.13.0`
-at commit `335467ec0d98aca69df49c285edd56eb00e736e6`. The Git history is retained;
+All patches in this repository are applied on top of upstream release `v0.20.0`
+at commit `3a6b64b602ad062b29fac66902ed18a7ef5fd9dc`. The Git history is retained;
 this register describes the purpose and compatibility impact of the FYJIT
 divergence. Detailed user-facing changes are also recorded in `CHANGELOG.md`.
+
+The original AGPL FYJIT derivative remains AGPL-3.0. The v0.20.0 upstream
+MIT notice is retained separately in `LICENSE.upstream-MIT`.
 
 | Patch area                            | Purpose                                                                                                                                                                                                                                                        | Impact and upgrade risk                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

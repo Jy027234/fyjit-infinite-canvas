@@ -21,7 +21,7 @@ function resolveRouteMetadata(pathname: string) {
     );
 }
 
-// 监听 SPA 路由变化并上报 pageview。无统计配置时 trackPageview 为空操作。
+// Observe SPA route changes and report page views; trackPageview is a no-op when analytics is not configured.
 export function AnalyticsTracker() {
     const location = useLocation();
 

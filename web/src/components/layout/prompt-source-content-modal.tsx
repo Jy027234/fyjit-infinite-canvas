@@ -1,6 +1,7 @@
 import { Alert, App, Button, Empty, Modal, Space, Table, Tag } from "antd";
 import { Copy, Flag, FolderPlus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -11,6 +12,7 @@ import { PromptSourceReportModal } from "./prompt-source-report-modal";
 
 export function PromptSourceContentModal({ source, onClose }: { source: PromptSource | null; onClose: () => void }) {
     const { message } = App.useApp();
+    const { t } = useTranslation();
     const [items, setItems] = useState<Prompt[]>([]);
     const [loading, setLoading] = useState(false);
     const [detail, setDetail] = useState<Prompt | null>(null);
@@ -35,7 +37,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                 setLoading(false);
             }
         },
-        [source, message],
+        [source, message, t],
     );
 
     useEffect(() => {
@@ -80,11 +82,11 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                 title={
                     <div className="flex flex-wrap items-center justify-between gap-2 pr-6">
                         <div>
-                            <div className="text-base font-semibold">{source?.name || ""} · 提示词内容</div>
-                            <div className="mt-0.5 text-xs font-normal text-stone-500">共 {items.length} 条</div>
+                            <div className="text-base font-semibold">{t("config.promptSources.content.title", { name: source?.name || "" })}</div>
+                            <div className="mt-0.5 text-xs font-normal text-stone-500">{t("config.promptSources.content.count", { count: items.length })}</div>
                         </div>
                         <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={() => void load(true)}>
-                            立即更新
+                            {t("config.promptSources.content.refresh")}
                         </Button>
                     </div>
                 }
@@ -110,16 +112,16 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                     dataSource={items}
                     pagination={{ pageSize: 10, showSizeChanger: false, size: "small" }}
                     scroll={{ y: "56vh" }}
-                    locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词" /> }}
+                    locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("config.promptSources.content.empty")} /> }}
                     columns={[
                         {
-                            title: "封面",
+                            title: t("config.promptSources.content.cover"),
                             dataIndex: "coverUrl",
                             width: 72,
                             render: (coverUrl: string) => (coverUrl ? <img src={coverUrl} alt="" className="size-12 rounded object-cover" /> : <div className="size-12 rounded bg-stone-100 dark:bg-stone-800" />),
                         },
                         {
-                            title: "标题",
+                            title: t("config.promptSources.content.titleColumn"),
                             dataIndex: "title",
                             render: (title: string, item) => (
                                 <div className="min-w-0">
@@ -129,7 +131,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             ),
                         },
                         {
-                            title: "标签",
+                            title: t("config.promptSources.content.tags"),
                             dataIndex: "tags",
                             width: 200,
                             render: (tags: string[]) => (
@@ -147,11 +149,11 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             width: 270,
                             render: (_, item) => (
                                 <Space size={4} wrap>
-                                    <Button size="small" type="text" icon={<Copy className="size-3.5" />} onClick={() => copyText(item.prompt, "提示词已复制")}>
-                                        复制
+                                    <Button size="small" type="text" icon={<Copy className="size-3.5" />} onClick={() => copyText(item.prompt, t("common.promptCopied"))}>
+                                        {t("common.copy")}
                                     </Button>
                                     <Button size="small" type="text" onClick={() => setDetail(item)}>
-                                        详情
+                                        {t("common.details")}
                                     </Button>
                                     <Button size="small" type="text" disabled={savedAssetIds.has(item.id)} icon={<FolderPlus className="size-3.5" />} onClick={() => saveAsset(item)}>
                                         {savedAssetIds.has(item.id) ? "已加入" : "加入资产"}

@@ -27,6 +27,8 @@ const secondOptions = [6, 10, 12, 16, 20];
 export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
 export const videoSizeOptions = sizeOptions.map((item) => ({ value: item.value, label: item.label }));
 export const videoSecondOptions = secondOptions.map((value) => String(value));
+export { clampVideoSeconds } from "@/lib/media-size";
+export const videoSecondsRange = { min: 4, max: 30 };
 
 type VideoSettingsPanelProps = {
     config: AiConfig;

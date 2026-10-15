@@ -3,11 +3,13 @@ FYJIT Creative Canvas
 This project is derived from Infinite Canvas by basketikun:
 https://github.com/basketikun/infinite-canvas
 
-Upstream release: v0.13.0
-Upstream commit: 335467ec0d98aca69df49c285edd56eb00e736e6
-License: GNU Affero General Public License v3.0
+Upstream release: v0.20.0
+Upstream commit: 3a6b64b602ad062b29fac66902ed18a7ef5fd9dc
+Upstream license: MIT; see LICENSE.upstream-MIT (Copyright (c) 2026 basketikun).
+FYJIT derivative license: GNU Affero General Public License v3.0.
 
-The original copyright notices, Git history, and AGPL-3.0 license are retained.
+The original AGPL baseline v0.13.0, copyright notices, Git history, and
+AGPL-3.0 license are retained alongside the new upstream MIT notice.
 FYJIT-specific modifications are also distributed under AGPL-3.0.
 
 Third-party JavaScript packages, bundled assets, and audited prompt sources are

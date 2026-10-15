@@ -23,6 +23,7 @@ export type AiConfig = {
     videoGenerateAudio: string;
     videoWatermark: string;
     videoCameraFixed: string;
+    videoMode: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     quality: string;
@@ -30,6 +31,8 @@ export type AiConfig = {
     background: string;
     count: string;
     canvasImageCount: string;
+    nodeRegenerateBehavior: "new-node" | "overwrite";
+    autoFocusOnSelect: boolean;
 };
 
 export type FyjitModel = {
@@ -58,6 +61,7 @@ export const defaultConfig: AiConfig = {
     videoGenerateAudio: "true",
     videoWatermark: "false",
     videoCameraFixed: "false",
+    videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
     quality: "auto",
@@ -65,6 +69,8 @@ export const defaultConfig: AiConfig = {
     background: "",
     count: "1",
     canvasImageCount: "3",
+    nodeRegenerateBehavior: "new-node",
+    autoFocusOnSelect: false,
 };
 
 type ConfigStore = {
@@ -91,6 +97,7 @@ const persistedPreferenceKeys = [
     "videoGenerateAudio",
     "videoWatermark",
     "videoCameraFixed",
+    "videoMode",
     "systemPrompt",
     "reasoningEffort",
     "quality",
@@ -98,6 +105,8 @@ const persistedPreferenceKeys = [
     "background",
     "count",
     "canvasImageCount",
+    "nodeRegenerateBehavior",
+    "autoFocusOnSelect",
 ] as const satisfies ReadonlyArray<keyof AiConfig>;
 
 export const useConfigStore = create<ConfigStore>()(
@@ -154,8 +163,11 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 }
 
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
-    const preferred = modelOptionName(currentModel || "");
-    if (preferred && modelMatchesCapability(config, preferred, capability)) return preferred;
+    const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
+    for (const selection of [currentModel, defaultModel]) {
+        const preferred = modelOptionName(selection || "");
+        if (preferred && (!config.modelCapabilities[preferred]?.length || modelMatchesCapability(config, preferred, capability))) return preferred;
+    }
     return availableSelection(config, "", capability);
 }
 
@@ -179,9 +191,13 @@ export function modelOptionLabel(_config: AiConfig, value: string) {
 
 function availableSelection(config: AiConfig, current: string, capability: ModelCapability, recommended = "") {
     const normalized = modelOptionName(current);
-    if (normalized && modelMatchesCapability(config, normalized, capability)) return normalized;
+    if (normalized && (!config.modelCapabilities[normalized]?.length || modelMatchesCapability(config, normalized, capability))) return normalized;
     if (recommended && modelMatchesCapability(config, recommended, capability)) return recommended;
     return selectableModelsByCapability(config, capability)[0] || "";
+}
+
+export function boolConfig(value: string, fallback: boolean) {
+    return value ? value === "true" : fallback;
 }
 
 function recommendedModel(models: FyjitModel[], capability: string) {

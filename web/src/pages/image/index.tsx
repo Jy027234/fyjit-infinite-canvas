@@ -202,7 +202,7 @@ export default function ImagePage() {
 
     const imageModels = fyjitModels.filter((item) => item.capabilities.includes("image_generation"));
     const preferredModel = effectiveConfig.imageModel || effectiveConfig.model;
-    const model = imageModels.some((item) => item.id === preferredModel) ? preferredModel : imageModels[0]?.id || "";
+    const model = preferredModel || imageModels[0]?.id || "";
     const hasImageModel = fyjitModels.some((item) => item.id === model && item.capabilities.includes("image_generation"));
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const modelProfile = fyjitModels.find((item) => item.id === model)?.capability_profiles.image_generation;

@@ -29,11 +29,10 @@ export function ModelPicker({ value, onChange, capability, className, fullWidth 
     const labels = useMemo(() => new Map(fyjitModels.map((model) => [model.id, model.name])), [fyjitModels]);
     const recommended = useMemo(() => new Set(fyjitModels.filter((model) => !requiredCapability || model.recommended_for?.includes(requiredCapability)).map((model) => model.id)), [fyjitModels, requiredCapability]);
     const configured = value || "";
-    const current = options.includes(configured) ? configured : "";
+    const current = configured;
 
     useEffect(() => {
-        if (configured && options.length && !options.includes(configured)) onChange(options[0]);
-        else if (!configured && options.length) onChange(options[0]);
+        if (!configured && options.length) onChange(options[0]);
     }, [configured, onChange, options]);
 
     useEffect(() => {
@@ -79,6 +78,7 @@ export function ModelPicker({ value, onChange, capability, className, fullWidth 
                 onPointerDown={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.stopPropagation()}
             >
+                {current && !options.includes(current) ? <SelectItem value={current} disabled>{current}（不可用）</SelectItem> : null}
                 {options.length ? (
                     options.map((model) => (
                         <SelectItem key={model} value={model} textValue={labels.get(model) || model}>
@@ -117,11 +117,12 @@ function ModelIcon({ model }: { model: string }) {
 
 function resolveModelIcon(model: string) {
     const name = model.toLowerCase();
-    if (name.includes("claude") || name.includes("anthropic")) return "/icons/claude.svg";
-    if (name.includes("gemini") || name.includes("google")) return "/icons/gemini.svg";
-    if (name.includes("gpt") || name.includes("openai")) return "/icons/openai.svg";
-    if (name.includes("grok") || name.includes("grok")) return "/icons/grok.svg";
-    if (name.includes("deepseek") || name.includes("deepseek")) return "/icons/deepseek.svg";
-    if (name.includes("glm") || name.includes("glm")) return "/icons/glm.svg";
+    const base = import.meta.env.BASE_URL;
+    if (name.includes("claude") || name.includes("anthropic")) return `${base}icons/claude.svg`;
+    if (name.includes("gemini") || name.includes("google")) return `${base}icons/gemini.svg`;
+    if (name.includes("gpt") || name.includes("openai")) return `${base}icons/openai.svg`;
+    if (name.includes("grok")) return `${base}icons/grok.svg`;
+    if (name.includes("deepseek")) return `${base}icons/deepseek.svg`;
+    if (name.includes("glm")) return `${base}icons/glm.svg`;
     return "";
 }

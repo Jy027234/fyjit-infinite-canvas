@@ -4,7 +4,7 @@ import { createCreativeCanvas, deleteCreativeCanvas, fetchCreativeCanvases, rest
 import { getImageBlob } from "@/services/image-storage";
 import { getMediaBlob } from "@/services/file-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeImage, type ViewportTransform } from "@/types/canvas";
 
 export type CanvasProject = {
     id: string;
@@ -55,6 +55,36 @@ function emptyDocument(): CanvasDocument {
     return { nodes: [], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "lines", showImageInfo: false, viewport: initialViewport };
 }
 
+type LegacyBatchMetadata = CanvasNodeMetadata & { isBatchRoot?: boolean; batchRootId?: string; batchChildIds?: string[]; batchUsesReferenceImages?: boolean; imageBatchExpanded?: boolean };
+
+export function migrateLegacyCanvasBatches(document: CanvasDocument): CanvasDocument {
+    const removed = new Set<string>();
+    const nodes = document.nodes.map((root) => {
+        const metadata = root.metadata as LegacyBatchMetadata | undefined;
+        if (root.type !== CanvasNodeType.Image || !metadata || metadata.images?.length || !metadata.isBatchRoot) return root;
+        const childIds = new Set(metadata.batchChildIds || []);
+        const children = document.nodes.filter((node) => node.type === CanvasNodeType.Image && (childIds.has(node.id) || (node.metadata as LegacyBatchMetadata | undefined)?.batchRootId === root.id));
+        if (!children.length) return root;
+        const images: CanvasNodeImage[] = children.map((child) => ({
+            id: child.id, content: child.metadata?.content || "", storageKey: child.metadata?.storageKey, assetId: child.metadata?.assetId,
+            status: child.metadata?.status || (child.metadata?.content ? "success" : "idle"), errorDetails: child.metadata?.errorDetails,
+            naturalWidth: child.metadata?.naturalWidth || child.width, naturalHeight: child.metadata?.naturalHeight || child.height,
+            bytes: child.metadata?.bytes || 0, mimeType: child.metadata?.mimeType || "image/png",
+        }));
+        if (metadata.content && !images.some((image) => image.content === metadata.content)) images.unshift({ id: root.id, content: metadata.content, storageKey: metadata.storageKey, assetId: metadata.assetId, status: metadata.status || "success", naturalWidth: metadata.naturalWidth || root.width, naturalHeight: metadata.naturalHeight || root.height, bytes: metadata.bytes || 0, mimeType: metadata.mimeType || "image/png" });
+        const primary = images.find((image) => image.id === metadata.primaryImageId) || images.find((image) => image.content === metadata.content) || images[0];
+        for (const child of children) {
+            const externallyConnected = document.connections.some((edge) => (edge.fromNodeId === child.id || edge.toNodeId === child.id) && !(edge.fromNodeId === root.id && edge.toNodeId === child.id));
+            const mentioned = document.nodes.some((node) => [node.metadata?.prompt, node.metadata?.composerContent, node.type === CanvasNodeType.Text ? node.metadata?.content : undefined].some((text) => text?.includes(`@[node:${child.id}]`)));
+            const assistantReference = document.chatSessions.some((session) => session.messages.some((message) => message.references?.some((reference) => reference.id === child.id)));
+            if (!externallyConnected && !mentioned && !assistantReference && !child.metadata?.groupId) removed.add(child.id);
+        }
+        const { isBatchRoot: _isBatchRoot, batchRootId: _batchRootId, batchChildIds: _batchChildIds, batchUsesReferenceImages: _batchUsesReferenceImages, imageBatchExpanded: _imageBatchExpanded, ...rest } = metadata;
+        return { ...root, metadata: { ...rest, images, primaryImageId: primary.id, content: primary.content, storageKey: primary.storageKey, assetId: primary.assetId, naturalWidth: primary.naturalWidth, naturalHeight: primary.naturalHeight, bytes: primary.bytes, mimeType: primary.mimeType } };
+    });
+    return { ...document, nodes: nodes.filter((node) => !removed.has(node.id)), connections: document.connections.filter((edge) => !removed.has(edge.fromNodeId) && !removed.has(edge.toNodeId)) };
+}
+
 function migrateCanvasDocument(source: Partial<CanvasDocument> | undefined, schemaVersion: number): CanvasDocument {
     let document: CanvasDocument = { ...emptyDocument(), ...source };
     let version = Math.max(1, schemaVersion || 1);
@@ -74,7 +104,7 @@ function migrateCanvasDocument(source: Partial<CanvasDocument> | undefined, sche
         }
         version += 1;
     }
-    return document;
+    return migrateLegacyCanvasBatches(document);
 }
 
 function fromServer(project: CreativeCanvasProject<CanvasDocument>): CanvasProject {
